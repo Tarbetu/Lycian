@@ -16,7 +16,7 @@ pub enum TokenType {
     Range,
     RangeEqual,
 
-    // Operators or Unaries
+    // Operators
     Not,
     NotEqual,
     Equal,
