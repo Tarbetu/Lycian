@@ -128,10 +128,9 @@ impl<'a> Scanner<'a> {
                     }
                 }
                 digit if digit.is_ascii_digit() => Some(self.number()),
-                space if space.is_whitespace() => {
-                    self.handle_whitespace(space);
-                    None
-                }
+                space if space.is_whitespace() => self
+                    .handle_whitespace(space)
+                    .map(|kind| (current + 1, kind)),
                 char if char.is_ascii_lowercase() => Some(self.identifier(char)),
                 char if char.is_ascii_uppercase() => Some(self.constant()),
                 char => Some((current + 1, UnexpectedCharacter(char))),
@@ -150,64 +149,74 @@ impl<'a> Scanner<'a> {
     }
 
     fn push(&mut self, current: usize, kind: TokenType) {
-        if matches!(self.line_buffer.last(), Some(TokenType::Space) | None) {
-            self.line_buffer.push(kind);
-        }
+        if !(kind == TokenType::Endline) {
+            if matches!(self.line_buffer.last(), Some(TokenType::Space) | None) {
+                self.line_buffer.push(kind);
+            }
 
-        if !matches!(self.line_buffer.last(), Some(TokenType::Space) | None) {
-            let indentation = self.line_buffer.len() - 1;
+            if !matches!(self.line_buffer.last(), Some(TokenType::Space) | None) {
+                let indentation = self.line_buffer.len() - 1;
 
-            match indentation.cmp(&self.current_indentation) {
-                Ordering::Less => {
-                    for _ in 0..((self.current_indentation - indentation) / self.first_indentation)
-                    {
+                match indentation.cmp(&self.current_indentation) {
+                    Ordering::Less => {
+                        for _ in
+                            0..((self.current_indentation - indentation) / self.first_indentation)
+                        {
+                            self.tokens.push_back(Token::new(
+                                TokenType::Dedent,
+                                current,
+                                current,
+                                self.line,
+                            ));
+                        }
+
+                        if self.current_indentation == 0 {
+                            self.first_indentation = 0;
+                        }
+                    }
+                    Ordering::Equal => {}
+                    Ordering::Greater => {
+                        if self.first_indentation == 0 {
+                            self.first_indentation = indentation;
+                        }
+
                         self.tokens.push_back(Token::new(
-                            TokenType::Dedent,
+                            TokenType::Indent,
                             current,
                             current,
                             self.line,
                         ));
                     }
-
-                    if self.current_indentation == 0 {
-                        self.first_indentation = 0;
-                    }
                 }
-                Ordering::Equal => {}
-                Ordering::Greater => {
-                    if self.first_indentation == 0 {
-                        self.first_indentation = indentation;
-                    }
-
-                    self.tokens.push_back(Token::new(
-                        TokenType::Indent,
-                        current,
-                        current,
-                        self.line,
-                    ));
-                }
+                self.current_indentation = indentation;
             }
-            self.current_indentation = indentation;
         }
 
         self.tokens
             .push_back(Token::new(kind, self.start, current, self.line));
     }
 
-    fn handle_whitespace(&mut self, current_char: char) {
+    fn handle_whitespace(&mut self, current_char: char) -> Option<TokenType> {
         use TokenType::*;
 
         match current_char {
             '\n' => {
                 self.line += 1;
-                self.line_buffer.clear()
+                let res = if !self.line_buffer.is_empty() {
+                    Some(Endline)
+                } else {
+                    None
+                };
+                self.line_buffer.clear();
+                res
             }
             ' ' | '\t' => {
                 if matches!(self.line_buffer.last(), Some(TokenType::Space) | None) {
                     self.line_buffer.push(Space);
                 }
+                None
             }
-            _ if current_char.is_whitespace() => {}
+            _ if current_char.is_whitespace() => None,
             _ => unreachable!(),
         }
     }
@@ -326,9 +335,9 @@ impl<'a> Scanner<'a> {
         let kind = match buffer.as_str() {
             "and" => And,
             "or" => Or,
-            "type" => Type,
+            "class" => Class,
             "implementing" => Implementing,
-            "self" => TypeSelf,
+            "self" => ClassSelf,
             "super" => Super,
             "true" => True,
             "false" => False,
@@ -410,12 +419,6 @@ mod tests {
 
         let result = get_token_kinds(&tokenize(scanner));
         assert_eq!(&result, kinds);
-    }
-
-    #[test]
-    fn it_works() {
-        let result = 2 + 2;
-        assert_eq!(result, 4);
     }
 
     #[test]
@@ -609,8 +612,8 @@ mod tests {
     }
 
     #[test]
-    fn tokenize_type() {
-        assert_for_single_token("type", Type)
+    fn tokenize_class() {
+        assert_for_single_token("class", Class)
     }
 
     #[test]
@@ -625,7 +628,7 @@ mod tests {
 
     #[test]
     fn tokenize_self() {
-        assert_for_single_token("self", TypeSelf)
+        assert_for_single_token("self", ClassSelf)
     }
 
     #[test]
@@ -718,9 +721,9 @@ true
         assert_for_tokens(
             source,
             &[
-                Match, Constant, Colon, Indent, Integer, Arrow, Identifier, ParenOpen, ParenClose,
-                Integer, Arrow, Identifier, ParenOpen, ParenClose, Integer, Arrow, Identifier,
-                ParenOpen, ParenClose, Dedent, True,
+                Match, Constant, Colon, Endline, Indent, Integer, Arrow, Identifier, ParenOpen,
+                ParenClose, Endline, Integer, Arrow, Identifier, ParenOpen, ParenClose, Endline,
+                Integer, Arrow, Identifier, ParenOpen, ParenClose, Endline, Dedent, True, Endline,
             ],
         )
     }
@@ -737,17 +740,17 @@ match cond:
         assert_for_tokens(
             source,
             &[
-                Match, Identifier, Colon, Indent, Integer, Arrow, Identifier, ParenOpen,
-                ParenClose, Integer, Arrow, Indent, Identifier, ParenOpen, ParenClose, Dedent,
-                Dedent,
+                Match, Identifier, Colon, Endline, Indent, Integer, Arrow, Identifier, ParenOpen,
+                ParenClose, Endline, Integer, Arrow, Endline, Indent, Identifier, ParenOpen,
+                ParenClose, Endline, Dedent, Dedent,
             ],
         )
     }
 
     #[test]
-    fn tokenize_type_definition() {
+    fn tokenize_type_definition_with_expression() {
         let source = "
-type Constant:
+class Constant:
     function =
         match cond:
             5 -> five()
@@ -762,34 +765,41 @@ IO.puts(Constant().function)
         assert_for_tokens(
             source,
             &[
-                Type,
+                Class,
                 Constant,
                 Colon,
+                Endline,
                 Indent,
                 Identifier,
                 Equal,
+                Endline,
                 Indent,
                 Match,
                 Identifier,
                 Colon,
+                Endline,
                 Indent,
                 Integer,
                 Arrow,
                 Identifier,
                 ParenOpen,
                 ParenClose,
+                Endline,
                 Integer,
                 Arrow,
+                Endline,
                 Indent,
                 Identifier,
                 ParenOpen,
                 ParenClose,
+                Endline,
                 Dedent,
                 Dedent,
                 Dedent,
                 Identifier,
                 Equal,
                 BasicString,
+                Endline,
                 Dedent,
                 Constant,
                 Dot,
@@ -801,6 +811,7 @@ IO.puts(Constant().function)
                 Dot,
                 Identifier,
                 ParenClose,
+                Endline,
             ],
         )
     }

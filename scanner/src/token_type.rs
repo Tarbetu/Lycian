@@ -44,10 +44,10 @@ pub enum TokenType {
     // Keywords
     And,
     Or,
-    Type,
+    Class,
     Super,
     Implementing,
-    TypeSelf,
+    ClassSelf,
     True,
     False,
     Use,
