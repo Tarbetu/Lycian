@@ -30,6 +30,7 @@ pub enum TokenType {
     Slash,
     Star,
     Percent,
+    Pipe,
 
     // Literals
     Identifier,
@@ -44,7 +45,6 @@ pub enum TokenType {
     // Keywords
     And,
     Or,
-    Class,
     Super,
     Implementing,
     ClassSelf,

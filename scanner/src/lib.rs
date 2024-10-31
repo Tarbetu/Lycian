@@ -62,6 +62,7 @@ impl<'a> Scanner<'a> {
                 '*' => Some((current + 1, Star)),
                 '/' => Some((current + 1, Slash)),
                 '%' => Some((current + 1, Percent)),
+                '|' => Some((current + 1, Pipe)),
                 '-' => {
                     if let Some(&(_, '>')) = self.chars.peek() {
                         self.chars.next();
@@ -335,7 +336,6 @@ impl<'a> Scanner<'a> {
         let kind = match buffer.as_str() {
             "and" => And,
             "or" => Or,
-            "class" => Class,
             "implementing" => Implementing,
             "self" => ClassSelf,
             "super" => Super,
@@ -357,7 +357,7 @@ impl<'a> Scanner<'a> {
 
         loop {
             match self.chars.peek() {
-                Some(&(_, char)) if char.is_ascii_alphabetic() => {
+                Some(&(_, char)) if char.is_ascii_alphanumeric() => {
                     self.chars.next();
                 }
                 Some(&(index, _)) => return (index, Constant),
@@ -368,12 +368,14 @@ impl<'a> Scanner<'a> {
 
     fn catch_until_line_end(&mut self, kind: TokenType) -> (usize, TokenType) {
         loop {
-            match self.chars.next() {
+            match self.chars.peek() {
                 Some((index, '\n')) => {
                     return (index + 1, kind);
                 }
                 None => return (self.max, kind),
-                _ => {}
+                _ => {
+                    self.chars.next();
+                }
             }
         }
     }
@@ -612,11 +614,6 @@ mod tests {
     }
 
     #[test]
-    fn tokenize_class() {
-        assert_for_single_token("class", Class)
-    }
-
-    #[test]
     fn tokenize_super() {
         assert_for_single_token("super", Super)
     }
@@ -667,8 +664,18 @@ mod tests {
     }
 
     #[test]
+    fn tokenize_float_without_fractional_part() {
+        assert_for_single_token("42.", Float);
+    }
+
+    #[test]
     fn tokenize_constant() {
         assert_for_single_token("MindInABox", Constant);
+    }
+
+    #[test]
+    fn tokenize_constant_with_number() {
+        assert_for_single_token("M1ndIn4B0x", Constant);
     }
 
     #[test]
@@ -688,12 +695,27 @@ mod tests {
 
     #[test]
     fn tokenize_comment() {
-        assert_for_single_token("# This is a comment!\n", Comment);
+        assert_for_single_token("# This is a comment!", Comment);
     }
 
     #[test]
     fn tokenize_documentation() {
-        assert_for_single_token("## This is a documentation!\n", Documentation);
+        assert_for_single_token("## This is a documentation!", Documentation);
+    }
+
+    #[test]
+    fn tokenize_pipe() {
+        assert_for_single_token("|", Pipe);
+    }
+
+    #[test]
+    fn tokenize_simple_wildcard() {
+        assert_for_single_token("_", Wildcard);
+    }
+
+    #[test]
+    fn tokenize_wildcard_with_name() {
+        assert_for_single_token("_mind_in_a_box", Wildcard);
     }
 
     #[test]
@@ -750,7 +772,7 @@ match cond:
     #[test]
     fn tokenize_type_definition_with_expression() {
         let source = "
-class Constant:
+Constant:
     function =
         match cond:
             5 -> five()
@@ -765,7 +787,6 @@ IO.puts(Constant().function)
         assert_for_tokens(
             source,
             &[
-                Class,
                 Constant,
                 Colon,
                 Endline,
