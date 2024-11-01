@@ -150,12 +150,13 @@ impl<'a> Scanner<'a> {
     }
 
     fn push(&mut self, current: usize, kind: TokenType) {
-        if !(kind == TokenType::Endline) {
-            if matches!(self.line_buffer.last(), Some(TokenType::Space) | None) {
+        use TokenType::{Dedent, Endline, Indent, InvalidIndentation, Semicolon, Space};
+        if !(kind == Endline) {
+            if matches!(self.line_buffer.last(), Some(Space) | None) {
                 self.line_buffer.push(kind);
             }
 
-            if !matches!(self.line_buffer.last(), Some(TokenType::Space) | None) {
+            if !matches!(self.line_buffer.last(), Some(Space) | None) {
                 let indentation = self.line_buffer.len() - 1;
 
                 match indentation.cmp(&self.current_indentation) {
@@ -163,12 +164,8 @@ impl<'a> Scanner<'a> {
                         for _ in
                             0..((self.current_indentation - indentation) / self.first_indentation)
                         {
-                            self.tokens.push_back(Token::new(
-                                TokenType::Dedent,
-                                current,
-                                current,
-                                self.line,
-                            ));
+                            self.tokens
+                                .push_back(Token::new(Dedent, self.start, current, self.line));
                         }
 
                         if self.current_indentation == 0 {
@@ -179,22 +176,28 @@ impl<'a> Scanner<'a> {
                     Ordering::Greater => {
                         if self.first_indentation == 0 {
                             self.first_indentation = indentation;
+                        } else if self.current_indentation % self.first_indentation != 0 {
+                            self.tokens.push_back(Token::new(
+                                InvalidIndentation,
+                                current,
+                                current,
+                                self.line,
+                            ));
                         }
 
-                        self.tokens.push_back(Token::new(
-                            TokenType::Indent,
-                            current,
-                            current,
-                            self.line,
-                        ));
+                        self.tokens
+                            .push_back(Token::new(Indent, self.start, current, self.line));
                     }
                 }
                 self.current_indentation = indentation;
             }
-        }
 
-        self.tokens
-            .push_back(Token::new(kind, self.start, current, self.line));
+            self.tokens
+                .push_back(Token::new(kind, self.start, current, self.line));
+        } else {
+            self.tokens
+                .push_back(Token::new(Semicolon, self.start, current, self.line))
+        }
     }
 
     fn handle_whitespace(&mut self, current_char: char) -> Option<TokenType> {
@@ -743,9 +746,10 @@ true
         assert_for_tokens(
             source,
             &[
-                Match, Constant, Colon, Endline, Indent, Integer, Arrow, Identifier, ParenOpen,
-                ParenClose, Endline, Integer, Arrow, Identifier, ParenOpen, ParenClose, Endline,
-                Integer, Arrow, Identifier, ParenOpen, ParenClose, Endline, Dedent, True, Endline,
+                Match, Constant, Colon, Semicolon, Indent, Integer, Arrow, Identifier, ParenOpen,
+                ParenClose, Semicolon, Integer, Arrow, Identifier, ParenOpen, ParenClose,
+                Semicolon, Integer, Arrow, Identifier, ParenOpen, ParenClose, Semicolon, Dedent,
+                True, Semicolon,
             ],
         )
     }
@@ -762,9 +766,9 @@ match cond:
         assert_for_tokens(
             source,
             &[
-                Match, Identifier, Colon, Endline, Indent, Integer, Arrow, Identifier, ParenOpen,
-                ParenClose, Endline, Integer, Arrow, Endline, Indent, Identifier, ParenOpen,
-                ParenClose, Endline, Dedent, Dedent,
+                Match, Identifier, Colon, Semicolon, Indent, Integer, Arrow, Identifier, ParenOpen,
+                ParenClose, Semicolon, Integer, Arrow, Semicolon, Indent, Identifier, ParenOpen,
+                ParenClose, Semicolon, Dedent, Dedent,
             ],
         )
     }
@@ -789,38 +793,38 @@ IO.puts(Constant().function)
             &[
                 Constant,
                 Colon,
-                Endline,
+                Semicolon,
                 Indent,
                 Identifier,
                 Equal,
-                Endline,
+                Semicolon,
                 Indent,
                 Match,
                 Identifier,
                 Colon,
-                Endline,
+                Semicolon,
                 Indent,
                 Integer,
                 Arrow,
                 Identifier,
                 ParenOpen,
                 ParenClose,
-                Endline,
+                Semicolon,
                 Integer,
                 Arrow,
-                Endline,
+                Semicolon,
                 Indent,
                 Identifier,
                 ParenOpen,
                 ParenClose,
-                Endline,
+                Semicolon,
                 Dedent,
                 Dedent,
                 Dedent,
                 Identifier,
                 Equal,
                 BasicString,
-                Endline,
+                Semicolon,
                 Dedent,
                 Constant,
                 Dot,
@@ -832,7 +836,7 @@ IO.puts(Constant().function)
                 Dot,
                 Identifier,
                 ParenClose,
-                Endline,
+                Semicolon,
             ],
         )
     }

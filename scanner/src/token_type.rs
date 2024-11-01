@@ -75,6 +75,7 @@ pub enum TokenType {
     UnterminatedChar,
     EmptyChar,
     UnterminatedString,
+    InvalidIndentation,
 }
 
 impl Display for TokenType {
