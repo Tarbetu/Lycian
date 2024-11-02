@@ -1,21 +1,18 @@
 use crate::Expression;
 use crate::FunctionIndex;
-use crate::Name;
+use crate::NameIndex;
 
 pub enum Statement {
     Class {
-        name: Name,
-        implementing_list: Vec<Statement>,
+        name: NameIndex,
+        implementing_list: Vec<NameIndex>,
         states: Vec<Statement>,
         decorator: String,
+        methods: Vec<FunctionIndex>,
     },
-    Implementing(Name),
+    Implementing(NameIndex),
     ClassState {
-        name: Name,
+        name: NameIndex,
         pattern: Vec<Expression>,
-    },
-    Method {
-        class: Box<Statement>,
-        function: FunctionIndex,
     },
 }

@@ -1,12 +1,12 @@
 use crate::literal::*;
 use crate::operator::*;
-use crate::{ConstantIndex, FunctionIndex, Name};
+use crate::{FunctionIndex, Name};
 
 #[derive(Debug, PartialEq)]
 pub enum Expression {
     Literal(Literal),
     Grouping(Box<Expression>),
-    Constant(ConstantIndex),
+    Constant(Name),
 
     Binary(Box<Expression>, BinaryOperator, Box<Expression>),
     Unary(UnaryOperator, Box<Expression>),
