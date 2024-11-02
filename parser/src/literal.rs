@@ -1,10 +1,12 @@
 use crate::LiteralIndex;
 
+#[derive(Debug, PartialEq)]
 pub struct Literal {
     index: LiteralIndex,
     kind: LiteralType,
 }
 
+#[derive(Debug, PartialEq)]
 pub enum LiteralType {
     Integer,
     Float,

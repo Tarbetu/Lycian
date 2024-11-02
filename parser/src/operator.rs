@@ -1,4 +1,4 @@
-#[derive(Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum BinaryOperator {
     Add,
     Substract,
@@ -8,11 +8,13 @@ pub enum BinaryOperator {
     Declaration,
 }
 
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum UnaryOperator {
     Negate,
     Not,
 }
 
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum LogicalOperator {
     And,
     Or,

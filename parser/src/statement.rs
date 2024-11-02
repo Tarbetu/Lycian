@@ -1,4 +1,5 @@
 use crate::Expression;
+use crate::FunctionIndex;
 use crate::Name;
 
 pub enum Statement {
@@ -9,14 +10,12 @@ pub enum Statement {
         decorator: String,
     },
     Implementing(Name),
-    State {
+    ClassState {
         name: Name,
         pattern: Vec<Expression>,
     },
-    Function {
+    Method {
         class: Box<Statement>,
-        name: Name,
-        body: Vec<Expression>,
-        decorator: String,
+        function: FunctionIndex,
     },
 }
