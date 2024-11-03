@@ -1,6 +1,6 @@
 use crate::TokenType;
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct Token {
     pub kind: TokenType,
     pub start: usize,

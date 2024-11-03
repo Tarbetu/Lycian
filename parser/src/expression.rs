@@ -49,7 +49,7 @@ pub enum Expression {
     },
     Pattern {
         name: Option<Box<Expression>>,
-        value: Box<Literal>,
+        value: Box<Expression>,
     },
 }
 

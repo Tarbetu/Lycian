@@ -55,7 +55,7 @@ impl<'a> Parser<'a> {
         let mut classes = Vec::new();
 
         while self.peek().is_some() {
-            let program = self.class_declaration();
+            let program = self.class();
 
             match program {
                 Ok(class) => classes.push(class),
@@ -68,9 +68,18 @@ impl<'a> Parser<'a> {
         Ok(classes)
     }
 
-    pub fn class_declaration(&mut self) -> ParserResult<Statement> {
-        // Get decorator!
-        use TokenType::{Colon, Endline, Implementing, Indent};
+    pub fn class(&mut self) -> ParserResult<Statement> {
+        use Statement::*;
+        use TokenType::*;
+
+        let decorator = if self.is_match(&[Decorator]) {
+            let token = self.peek().unwrap();
+
+            self.lexemes[token.start..token.end].join("")
+        } else {
+            String::new()
+        };
+
         let name = self.consume_name()?;
 
         self.consume(Colon, "':'")?;
@@ -79,25 +88,67 @@ impl<'a> Parser<'a> {
 
         let mut implementing_list = Vec::new();
 
-        if self.is_match(&[Implementing]) {
+        if self.is_match(&[TokenType::Implementing]) {
             implementing_list.push(self.consume_name()?);
 
-            while let Some(Implementing) = self.peek().map(|t| t.kind) {
+            while let Some(TokenType::Implementing) = self.peek().map(|t| t.kind) {
                 self.advance();
                 implementing_list.push(self.consume_name()?);
             }
         }
 
-        let states = vec![];
-        let methods = vec![];
+        let mut states = vec![];
+        let mut methods = vec![];
+
+        match self.declaration()? {
+            state @ ClassState { .. } => states.push(state),
+            Method(index) => methods.push(index),
+            _ => unreachable!(),
+        };
+
+        self.consume(Dedent, "Indendation end")?;
 
         Ok(Statement::Class {
             name,
             implementing_list,
             states,
             methods,
-            decorator: String::new(),
+            decorator,
         })
+    }
+
+    fn declaration(&mut self) -> ParserResult<Statement> {
+        let patterns = self.pattern_list()?;
+
+        unimplemented!();
+    }
+
+    fn pattern_list(&mut self) -> ParserResult<Vec<Expression>> {
+        use TokenType::{Comma, ParenClose, ParenOpen};
+
+        let mut patterns = Vec::new();
+
+        if self.is_match(&[ParenOpen]) {
+            patterns.push(self.pattern()?);
+
+            while self.is_match(&[Comma]) {
+                patterns.push(self.pattern()?);
+            }
+
+            self.consume(ParenClose, "Right Paranthesis")?;
+        }
+
+        Ok(patterns)
+    }
+
+    fn pattern(&mut self) -> ParserResult<Expression> {
+        use ParserError::*;
+
+        use TokenType::{Constant, Identifier, Wildcard};
+
+        if self.is_match(&[Wildcard, Identifier]) {}
+
+        unimplemented!()
     }
 
     fn peek(&self) -> Option<Token> {
@@ -118,6 +169,28 @@ impl<'a> Parser<'a> {
         }
 
         self.previous()
+    }
+
+    fn is_match(&mut self, kinds: &[TokenType]) -> bool {
+        kinds
+            .iter()
+            .any(|kind| self.peek().map_or(false, |token| token.kind == *kind))
+            .then(|| self.advance())
+            .is_some()
+    }
+
+    fn consume(&mut self, kind: TokenType, expected: &'static str) -> ParserResult<()> {
+        if !self.is_match(&[kind]) {
+            let token = self.peek().unwrap();
+
+            return Err(ParserError::UnexpectedToken {
+                expected,
+                found: token.kind,
+                line: Some(token.line),
+            });
+        }
+
+        Ok(())
     }
 
     fn consume_name(&mut self) -> ParserResult<NameIndex> {
@@ -161,25 +234,38 @@ impl<'a> Parser<'a> {
         index
     }
 
-    fn is_match(&mut self, kinds: &[TokenType]) -> bool {
-        kinds
-            .iter()
-            .any(|kind| self.peek().map_or(false, |token| token.kind == *kind))
-            .then(|| self.advance())
-            .is_some()
+    fn push_method(
+        &mut self,
+        name: NameIndex,
+        class: NameIndex,
+        params: Vec<Expression>,
+        return_type: Expression,
+        body: Expression,
+        decorator: Option<String>,
+    ) -> FunctionIndex {
+        self.push_function(name, Some(class), params, return_type, body, decorator)
     }
 
-    fn consume(&mut self, kind: TokenType, expected: &'static str) -> ParserResult<()> {
-        if !self.is_match(&[kind]) {
-            let token = self.peek().unwrap();
+    fn push_function(
+        &mut self,
+        name: NameIndex,
+        class: Option<NameIndex>,
+        params: Vec<Expression>,
+        return_type: Expression,
+        body: Expression,
+        decorator: Option<String>,
+    ) -> FunctionIndex {
+        let index = FunctionIndex(self.functions.len());
 
-            return Err(ParserError::UnexpectedToken {
-                expected,
-                found: token.kind,
-                line: Some(token.line),
-            });
-        }
+        self.functions.push(Function {
+            name,
+            class,
+            params,
+            return_type,
+            body,
+            decorator,
+        });
 
-        Ok(())
+        index
     }
 }

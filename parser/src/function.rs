@@ -1,13 +1,12 @@
 use crate::Expression;
-use crate::Name;
+use crate::NameIndex;
 
 pub struct Function {
-    pub class: Option<Name>,
-    pub name: Name,
+    pub class: Option<NameIndex>,
+    pub name: NameIndex,
     pub params: Vec<Expression>,
     pub return_type: Expression,
-    pub body: Box<Expression>,
-    pub is_recursive: bool,
+    pub body: Expression,
     pub decorator: Option<String>,
 }
 
@@ -21,6 +20,6 @@ impl Function {
     }
 
     pub fn is_constexpr(&self) -> bool {
-        (self.return_type.is_constexpr() || self.body.is_constexpr()) && !self.is_recursive
+        self.return_type.is_constexpr() || self.body.is_constexpr()
     }
 }

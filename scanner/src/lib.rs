@@ -20,10 +20,11 @@ pub struct Scanner<'a> {
     first_indentation: usize,
     current_indentation: usize,
     max: usize,
+    catch_comments: bool,
 }
 
 impl<'a> Scanner<'a> {
-    pub fn new(source: &'a str) -> Scanner {
+    pub fn new(source: &'a str, catch_comments: bool) -> Scanner {
         Scanner {
             chars: source.chars().enumerate().peekable(),
             tokens: VecDeque::new(),
@@ -33,6 +34,7 @@ impl<'a> Scanner<'a> {
             first_indentation: 0,
             current_indentation: 0,
             max: source.len(),
+            catch_comments,
         }
     }
 
@@ -123,9 +125,21 @@ impl<'a> Scanner<'a> {
                 '#' => {
                     if let Some(&(_, '#')) = self.chars.peek() {
                         self.chars.next();
-                        Some(self.catch_until_line_end(Documentation))
+                        let token = self.catch_until_line_end(Documentation);
+
+                        if self.catch_comments {
+                            Some(token)
+                        } else {
+                            None
+                        }
                     } else {
-                        Some(self.catch_until_line_end(Comment))
+                        let token = self.catch_until_line_end(Comment);
+
+                        if self.catch_comments {
+                            Some(token)
+                        } else {
+                            None
+                        }
                     }
                 }
                 digit if digit.is_ascii_digit() => Some(self.number()),
@@ -409,7 +423,7 @@ mod tests {
     fn assert_for_single_token(source: &str, kind: TokenType) {
         use unicode_segmentation::UnicodeSegmentation;
 
-        let scanner = Scanner::new(source);
+        let scanner = Scanner::new(source, true);
         let tokens = tokenize(scanner);
         let token = tokens.first().unwrap();
         let source_graphemes = source.graphemes(true).collect::<Vec<&str>>();
@@ -420,7 +434,7 @@ mod tests {
     }
 
     fn assert_for_tokens(source: &str, kinds: &[TokenType]) {
-        let scanner = Scanner::new(source);
+        let scanner = Scanner::new(source, true);
 
         let result = get_token_kinds(&tokenize(scanner));
         assert_eq!(&result, kinds);

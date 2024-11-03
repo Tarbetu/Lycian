@@ -13,6 +13,7 @@ pub enum Statement {
     Implementing(NameIndex),
     ClassState {
         name: NameIndex,
-        pattern: Vec<Expression>,
+        patterns: Vec<Expression>,
     },
+    Method(FunctionIndex),
 }
