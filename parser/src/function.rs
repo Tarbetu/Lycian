@@ -7,16 +7,16 @@ pub struct Function {
     pub params: Vec<Expression>,
     pub return_type: Expression,
     pub body: Expression,
-    pub decorator: Option<String>,
+    pub decorator: String,
 }
 
 impl Function {
     pub fn no_tail_call(&self) -> bool {
-        if let Some(decorator) = &self.decorator {
-            decorator == "tailcall:false"
-        } else {
-            false
-        }
+        self.decorator == "tailcall:false"
+    }
+
+    pub fn no_memoization(&self) -> bool {
+        self.decorator == "memoization:false"
     }
 
     pub fn is_constexpr(&self) -> bool {

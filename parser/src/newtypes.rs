@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct NameIndex(pub usize);
 
@@ -20,4 +22,14 @@ pub enum Name {
     /// Private names are defined with leading wildcard.
     /// i.e: _my_type
     Private(String),
+}
+
+impl Display for Name {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Name::Public(name) => write!(f, "{}", name),
+            Name::Protected(name) => write!(f, "{}", name),
+            Name::Private(name) => write!(f, "{}", name),
+        }
+    }
 }

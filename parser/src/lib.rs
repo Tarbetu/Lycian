@@ -43,8 +43,10 @@ impl<'a> Parser<'a> {
         self.names.get(index.0).expect("Invalid wildcard index")
     }
 
-    pub fn get_function(&mut self, index: FunctionIndex) -> &Function {
-        self.functions.get(index.0).expect("Invalid function index")
+    pub fn get_function(&mut self, index: FunctionIndex) -> &mut Function {
+        self.functions
+            .get_mut(index.0)
+            .expect("Invalid function index")
     }
 
     pub fn get_literal(&mut self, index: LiteralIndex) -> &Literal {
@@ -72,13 +74,7 @@ impl<'a> Parser<'a> {
         use Statement::*;
         use TokenType::*;
 
-        let decorator = if self.is_match(&[Decorator]) {
-            let token = self.peek().unwrap();
-
-            self.lexemes[token.start..token.end].join("")
-        } else {
-            String::new()
-        };
+        let decorator = self.consume_decorator()?;
 
         let name = self.consume_name()?;
 
@@ -100,13 +96,16 @@ impl<'a> Parser<'a> {
         let mut states = vec![];
         let mut methods = vec![];
 
-        match self.declaration()? {
-            state @ ClassState { .. } => states.push(state),
-            Method(index) => methods.push(index),
-            _ => unreachable!(),
-        };
-
-        self.consume(Dedent, "Indendation end")?;
+        while let Some(declaration) = self.declaration()? {
+            match declaration {
+                state @ ClassState { .. } => states.push(state),
+                Method(index) => {
+                    self.get_function(index).class = Some(name);
+                    methods.push(index)
+                }
+                _ => unreachable!(),
+            };
+        }
 
         Ok(Statement::Class {
             name,
@@ -117,22 +116,65 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn declaration(&mut self) -> ParserResult<Statement> {
+    fn declaration(&mut self) -> ParserResult<Option<Statement>> {
+        use Statement::{ClassState, Method};
+        use TokenType::{Arrow, Equal, Semicolon};
+
+        let decorator = self.consume_decorator()?;
+
+        let name = self.consume_name()?;
+
         let patterns = self.pattern_list()?;
 
-        unimplemented!();
+        if self.is_match(&[Semicolon]) {
+            Ok(Some(ClassState { name, patterns }))
+        } else if self.is_match(&[TokenType::Dedent]) {
+            Ok(None)
+        } else {
+            let return_type = if self.is_match(&[Arrow]) {
+                self.advance();
+
+                self.expression()?
+            } else {
+                return Err(ParserError::MissingReturnType {
+                    function: self.get_name(name).to_string(),
+                    line: self.previous().line,
+                });
+            };
+
+            self.consume(Equal, "Equal sign")?;
+
+            self.next_if(&[Semicolon]);
+
+            let body = self.block()?;
+
+            Ok(Some(Method(self.push_function(
+                name,
+                None,
+                patterns,
+                return_type,
+                body,
+                decorator,
+            ))))
+        }
     }
 
     fn pattern_list(&mut self) -> ParserResult<Vec<Expression>> {
-        use TokenType::{Comma, ParenClose, ParenOpen};
+        use TokenType::{Comma, ParenClose, ParenOpen, Semicolon};
 
         let mut patterns = Vec::new();
 
         if self.is_match(&[ParenOpen]) {
+            self.next_if(&[Semicolon]);
+
             patterns.push(self.pattern()?);
 
             while self.is_match(&[Comma]) {
+                self.advance();
+                self.next_if(&[Semicolon]);
+
                 patterns.push(self.pattern()?);
+                self.next_if(&[Semicolon]);
             }
 
             self.consume(ParenClose, "Right Paranthesis")?;
@@ -142,12 +184,115 @@ impl<'a> Parser<'a> {
     }
 
     fn pattern(&mut self) -> ParserResult<Expression> {
-        use ParserError::*;
+        use TokenType::*;
 
-        use TokenType::{Constant, Identifier, Wildcard};
+        if self.is_match(&[Wildcard, Identifier, Constant]) {
+            let name = self.push_name(&self.peek().unwrap());
 
-        if self.is_match(&[Wildcard, Identifier]) {}
+            if self.is_match(&[Colon]) {
+                if self.is_match(&[Colon]) {
+                    self.advance();
+                }
 
+                let value = Box::new(self.expression()?);
+
+                Ok(Expression::Pattern {
+                    name: Some(name),
+                    value,
+                })
+            } else {
+                Ok(Expression::Pattern {
+                    name: None,
+                    value: Box::new(Expression::Type(name)),
+                })
+            }
+        } else {
+            Ok(Expression::Pattern {
+                name: None,
+                value: Box::new(self.expression()?),
+            })
+        }
+    }
+
+    fn block(&mut self) -> ParserResult<Expression> {
+        use TokenType::{Dedent, Semicolon};
+
+        let mut expressions = vec![];
+
+        while !self.is_match(&[Dedent]) {
+            expressions.push(self.expression()?);
+
+            self.consume(Semicolon, "Endline")?;
+        }
+
+        let value = expressions.pop().unwrap();
+
+        if value.is_constexpr() {
+            Ok(value)
+        } else {
+            Ok(Expression::Block {
+                expressions,
+                value: Box::new(value),
+            })
+        }
+    }
+
+    fn expression(&mut self) -> ParserResult<Expression> {
+        self.function()
+    }
+
+    fn function(&mut self) -> ParserResult<Expression> {
+        use TokenType::*;
+
+        let expr = self.match_expr()?;
+
+        if self.is_match(&[ParenOpen]) {
+            let params = self.pattern_list()?;
+
+            let return_type = if self.is_match(&[Arrow]) {
+                self.advance();
+                Some(self.expression()?)
+            } else {
+                None
+            };
+
+            self.consume(Equal, "Equal sign")?;
+
+            let value = self.block()?;
+
+            let name = match expr {
+                Expression::Type(name) => name,
+                _ => return Err(ParserError::InvalidAssignmentTarget(self.previous().line)),
+            };
+
+            let return_type = if let Some(return_type) = return_type {
+                return_type
+            } else {
+                match value {
+                    Expression::Block { value, .. } if value.is_constexpr() => *value,
+                    _ => {
+                        return Err(ParserError::MissingReturnType {
+                            function: self.get_name(name).to_string(),
+                            line: self.previous().line,
+                        })
+                    }
+                }
+            };
+
+            Ok(Expression::Function(self.push_function(
+                name,
+                None,
+                params,
+                return_type,
+                value,
+                String::new(),
+            )))
+        } else {
+            Ok(expr)
+        }
+    }
+
+    fn match_expr(&mut self) -> ParserResult<Expression> {
         unimplemented!()
     }
 
@@ -217,6 +362,21 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn consume_decorator(&mut self) -> ParserResult<String> {
+        use TokenType::{Decorator, Semicolon};
+
+        if self.is_match(&[Decorator]) {
+            let token = self.peek().unwrap();
+
+            let res = self.lexemes[token.start..token.end].join("");
+            self.advance();
+            self.consume(Semicolon, "Endline")?;
+            Ok(res)
+        } else {
+            Ok(String::new())
+        }
+    }
+
     fn push_name(&mut self, token: &Token) -> NameIndex {
         use TokenType::{Constant, Identifier, Wildcard};
         let index = NameIndex(self.names.len());
@@ -234,18 +394,6 @@ impl<'a> Parser<'a> {
         index
     }
 
-    fn push_method(
-        &mut self,
-        name: NameIndex,
-        class: NameIndex,
-        params: Vec<Expression>,
-        return_type: Expression,
-        body: Expression,
-        decorator: Option<String>,
-    ) -> FunctionIndex {
-        self.push_function(name, Some(class), params, return_type, body, decorator)
-    }
-
     fn push_function(
         &mut self,
         name: NameIndex,
@@ -253,7 +401,7 @@ impl<'a> Parser<'a> {
         params: Vec<Expression>,
         return_type: Expression,
         body: Expression,
-        decorator: Option<String>,
+        decorator: String,
     ) -> FunctionIndex {
         let index = FunctionIndex(self.functions.len());
 
@@ -267,5 +415,11 @@ impl<'a> Parser<'a> {
         });
 
         index
+    }
+
+    fn next_if(&mut self, kinds: &[TokenType]) {
+        if self.is_match(kinds) {
+            self.advance();
+        }
     }
 }

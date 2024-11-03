@@ -1,12 +1,12 @@
 use crate::literal::*;
 use crate::operator::*;
-use crate::{FunctionIndex, Name};
+use crate::{FunctionIndex, NameIndex};
 
 #[derive(Debug, PartialEq)]
 pub enum Expression {
     Literal(Literal),
     Grouping(Box<Expression>),
-    Constant(Name),
+    Type(NameIndex),
 
     Binary(Box<Expression>, BinaryOperator, Box<Expression>),
     Unary(UnaryOperator, Box<Expression>),
@@ -30,25 +30,20 @@ pub enum Expression {
         function_id: FunctionIndex,
     },
 
-    StatePattern {
-        class: Name,
-        params: Vec<Expression>,
-    },
-
     IndexOperator(Box<Expression>, Box<Expression>),
 
     ClassSelf,
     Super(FunctionIndex),
     Block {
-        expressions: Option<Vec<Expression>>,
+        expressions: Vec<Expression>,
         value: Box<Expression>,
     },
     NamedBlock {
-        block_name: Name,
+        block_name: NameIndex,
         block: Box<Expression>,
     },
     Pattern {
-        name: Option<Box<Expression>>,
+        name: Option<NameIndex>,
         value: Box<Expression>,
     },
 }
