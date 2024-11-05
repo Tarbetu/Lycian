@@ -1,21 +1,10 @@
 #[derive(Debug, Copy, Clone, PartialEq)]
-pub enum BinaryOperator {
+pub enum Operator {
     Add,
     Substract,
     Multiply,
     Divide,
     Modulo,
-    Declaration,
-}
-
-#[derive(Debug, Copy, Clone, PartialEq)]
-pub enum UnaryOperator {
-    Negate,
-    Not,
-}
-
-#[derive(Debug, Copy, Clone, PartialEq)]
-pub enum LogicalOperator {
     And,
     Or,
     In,
@@ -25,4 +14,6 @@ pub enum LogicalOperator {
     SmallerOrEqual,
     Greater,
     GreaterOrEqual,
+    Negate,
+    Not,
 }

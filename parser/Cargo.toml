@@ -4,5 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+ahash = "0.8.11"
+rug = "1.26.1"
 scanner = { path = "../scanner" }
 unicode-segmentation = "1.12.0"

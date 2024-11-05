@@ -4,11 +4,13 @@ mod function;
 mod literal;
 mod newtypes;
 mod operator;
+mod pattern;
 mod statement;
 
 pub use crate::literal::*;
 pub use expression::Expression;
 pub use function::Function;
+pub use pattern::Pattern;
 pub use statement::Statement;
 
 pub use newtypes::*;
@@ -49,7 +51,7 @@ impl<'a> Parser<'a> {
             .expect("Invalid function index")
     }
 
-    pub fn get_literal(&mut self, index: LiteralIndex) -> &Literal {
+    pub fn get_literal(&self, index: LiteralIndex) -> &Literal {
         self.literals.get(index.0).expect("Invalid literal index")
     }
 
@@ -118,7 +120,7 @@ impl<'a> Parser<'a> {
 
     fn declaration(&mut self) -> ParserResult<Option<Statement>> {
         use Statement::{ClassState, Method};
-        use TokenType::{Arrow, Equal, Semicolon};
+        use TokenType::{Arrow, Dedent, Equal, Semicolon};
 
         let decorator = self.consume_decorator()?;
 
@@ -128,23 +130,20 @@ impl<'a> Parser<'a> {
 
         if self.is_match(&[Semicolon]) {
             Ok(Some(ClassState { name, patterns }))
-        } else if self.is_match(&[TokenType::Dedent]) {
+        } else if self.is_match(&[Dedent]) {
             Ok(None)
         } else {
             let return_type = if self.is_match(&[Arrow]) {
                 self.advance();
 
-                self.expression()?
+                Some(self.expression()?)
             } else {
-                return Err(ParserError::MissingReturnType {
-                    function: self.get_name(name).to_string(),
-                    line: self.previous().line,
-                });
+                None
             };
 
             self.consume(Equal, "Equal sign")?;
 
-            self.next_if(&[Semicolon]);
+            self.skip_if(&[Semicolon]);
 
             let body = self.block()?;
 
@@ -159,22 +158,22 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn pattern_list(&mut self) -> ParserResult<Vec<Expression>> {
+    fn pattern_list(&mut self) -> ParserResult<Vec<Pattern>> {
         use TokenType::{Comma, ParenClose, ParenOpen, Semicolon};
 
         let mut patterns = Vec::new();
 
         if self.is_match(&[ParenOpen]) {
-            self.next_if(&[Semicolon]);
+            self.skip_if(&[Semicolon]);
 
             patterns.push(self.pattern()?);
 
             while self.is_match(&[Comma]) {
                 self.advance();
-                self.next_if(&[Semicolon]);
+                self.skip_if(&[Semicolon]);
 
                 patterns.push(self.pattern()?);
-                self.next_if(&[Semicolon]);
+                self.skip_if(&[Semicolon]);
             }
 
             self.consume(ParenClose, "Right Paranthesis")?;
@@ -183,10 +182,10 @@ impl<'a> Parser<'a> {
         Ok(patterns)
     }
 
-    fn pattern(&mut self) -> ParserResult<Expression> {
+    fn pattern(&mut self) -> ParserResult<Pattern> {
         use TokenType::*;
 
-        if self.is_match(&[Wildcard, Identifier, Constant]) {
+        let (name, value) = if self.is_match(&[Wildcard, Identifier, Constant]) {
             let name = self.push_name(&self.peek().unwrap());
 
             if self.is_match(&[Colon]) {
@@ -194,24 +193,27 @@ impl<'a> Parser<'a> {
                     self.advance();
                 }
 
-                let value = Box::new(self.expression()?);
+                let value = self.expression()?;
 
-                Ok(Expression::Pattern {
-                    name: Some(name),
-                    value,
-                })
+                (Some(name), value)
             } else {
-                Ok(Expression::Pattern {
-                    name: None,
-                    value: Box::new(Expression::Type(name)),
-                })
+                (None, Expression::Type(name))
             }
         } else {
-            Ok(Expression::Pattern {
-                name: None,
-                value: Box::new(self.expression()?),
-            })
-        }
+            (None, self.expression()?)
+        };
+
+        let condition = if self.is_match(&[When]) {
+            Some(self.expression()?)
+        } else {
+            None
+        };
+
+        Ok(Pattern {
+            name,
+            value,
+            condition,
+        })
     }
 
     fn block(&mut self) -> ParserResult<Expression> {
@@ -227,8 +229,8 @@ impl<'a> Parser<'a> {
 
         let value = expressions.pop().unwrap();
 
-        if value.is_constexpr() {
-            Ok(value)
+        if let Some(value) = self.eval_constexpr(&value)? {
+            Ok(Expression::Literal(value))
         } else {
             Ok(Expression::Block {
                 expressions,
@@ -265,20 +267,6 @@ impl<'a> Parser<'a> {
                 _ => return Err(ParserError::InvalidAssignmentTarget(self.previous().line)),
             };
 
-            let return_type = if let Some(return_type) = return_type {
-                return_type
-            } else {
-                match value {
-                    Expression::Block { value, .. } if value.is_constexpr() => *value,
-                    _ => {
-                        return Err(ParserError::MissingReturnType {
-                            function: self.get_name(name).to_string(),
-                            line: self.previous().line,
-                        })
-                    }
-                }
-            };
-
             Ok(Expression::Function(self.push_function(
                 name,
                 None,
@@ -293,6 +281,68 @@ impl<'a> Parser<'a> {
     }
 
     fn match_expr(&mut self) -> ParserResult<Expression> {
+        use TokenType::{Arrow, Dedent, Indent, Match, Semicolon};
+        if self.is_match(&[Match]) {
+            let scrutinee = self.expression()?;
+
+            self.skip_if(&[Semicolon]);
+
+            self.consume(Indent, "Indendation start")?;
+
+            let arms = {
+                let mut arms = vec![];
+
+                while !self.is_match(&[Dedent]) {
+                    let pattern = self.pattern()?;
+
+                    self.consume(Arrow, "Arrow")?;
+
+                    let expr = if self.is_match(&[Semicolon]) {
+                        self.consume(Indent, "Endline")?;
+                        self.block()?
+                    } else {
+                        self.expression()?
+                    };
+
+                    arms.push((pattern, expr));
+                }
+
+                arms
+            };
+
+            Ok(Expression::Match {
+                scrutinee: Box::new(scrutinee),
+                arms,
+            })
+        } else {
+            self.or()
+        }
+    }
+
+    fn or(&mut self) -> ParserResult<Expression> {
+        use operator::Operator;
+        use TokenType::Or;
+
+        let mut left = self.and()?;
+
+        while self.is_match(&[Or]) {
+            self.advance();
+
+            let right = self.and()?;
+
+            left = Expression::Binary(Box::new(left), Operator::Or, Box::new(right));
+
+            // if let Some(literal_index) = self.eval_constexpr(&left)? {
+            //     left = Expression::Literal(literal_index)
+            // }
+        }
+
+        Ok(left)
+    }
+
+    fn and(&mut self) -> ParserResult<Expression> {
+        use TokenType::And;
+
         unimplemented!()
     }
 
@@ -398,8 +448,8 @@ impl<'a> Parser<'a> {
         &mut self,
         name: NameIndex,
         class: Option<NameIndex>,
-        params: Vec<Expression>,
-        return_type: Expression,
+        params: Vec<Pattern>,
+        return_type: Option<Expression>,
         body: Expression,
         decorator: String,
     ) -> FunctionIndex {
@@ -417,9 +467,82 @@ impl<'a> Parser<'a> {
         index
     }
 
-    fn next_if(&mut self, kinds: &[TokenType]) {
+    fn push_literal(&mut self, literal: Literal) -> LiteralIndex {
+        self.literals.push(literal);
+
+        LiteralIndex(self.literals.len())
+    }
+
+    fn skip_if(&mut self, kinds: &[TokenType]) {
         if self.is_match(kinds) {
             self.advance();
         }
+    }
+
+    // TODO: change self.literals as hashmap and remove unused items
+    fn eval_constexpr(&mut self, expr: &Expression) -> ParserResult<Option<LiteralIndex>> {
+        use operator::*;
+        use Expression::*;
+
+        Ok(match expr {
+            Literal(literal_index) => Some(*literal_index),
+            Grouping(expr) => self.eval_constexpr(expr)?,
+            Binary(lhs, op, rhs) => {
+                let Some(lhs) = self.eval_constexpr(lhs)? else {
+                    return Ok(None);
+                };
+                let Some(rhs) = self.eval_constexpr(rhs)? else {
+                    return Ok(None);
+                };
+                let lhs = self.get_literal(lhs);
+                let rhs = self.get_literal(rhs);
+                (match op {
+                    Operator::Add => lhs + rhs,
+                    Operator::Substract => lhs - rhs,
+                    Operator::Multiply => lhs * rhs,
+                    Operator::Divide => lhs / rhs,
+                    Operator::Modulo => lhs % rhs,
+                    Operator::And => lhs.and(rhs),
+                    Operator::Or => lhs.or(rhs),
+                    Operator::In => lhs.in_operator(rhs),
+                    Operator::Equal => lhs.is_equal(rhs),
+                    Operator::NotEqual => lhs.is_not_equal(rhs),
+                    Operator::Greater => lhs.greater(rhs),
+                    Operator::GreaterOrEqual => lhs.greater_equal(rhs),
+                    Operator::Smaller => lhs.less(rhs),
+                    Operator::SmallerOrEqual => lhs.less_equal(rhs),
+                    _ => unreachable!(),
+                })
+                .map(|literal| self.push_literal(literal))
+            }
+            Unary(op, expression) => {
+                let Some(expr) = self.eval_constexpr(expression)? else {
+                    return Ok(None);
+                };
+                let expr = self.get_literal(expr);
+                (match op {
+                    Operator::Not => !expr,
+                    Operator::Negate => -expr,
+                    _ => unreachable!(),
+                })
+                .map(|literal| self.push_literal(literal))
+            }
+            IndexOperator(container, index) => {
+                let Some(container) = self.eval_constexpr(container)? else {
+                    return Ok(None);
+                };
+                let Some(index) = self.eval_constexpr(index)? else {
+                    return Ok(None);
+                };
+                let container = self.get_literal(container);
+                let index = self.get_literal(index);
+
+                container
+                    .get(index)
+                    .map(|literal| self.push_literal(literal))
+            }
+
+            _ => unimplemented!(),
+        })
     }
 }

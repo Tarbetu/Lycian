@@ -1,6 +1,6 @@
-use crate::Expression;
 use crate::FunctionIndex;
 use crate::NameIndex;
+use crate::Pattern;
 
 pub enum Statement {
     Class {
@@ -13,7 +13,7 @@ pub enum Statement {
     Implementing(NameIndex),
     ClassState {
         name: NameIndex,
-        patterns: Vec<Expression>,
+        patterns: Vec<Pattern>,
     },
     Method(FunctionIndex),
 }

@@ -1,28 +1,28 @@
-use crate::literal::*;
 use crate::operator::*;
+use crate::LiteralIndex;
+use crate::Pattern;
 use crate::{FunctionIndex, NameIndex};
 
 #[derive(Debug, PartialEq)]
 pub enum Expression {
-    Literal(Literal),
+    Literal(LiteralIndex),
     Grouping(Box<Expression>),
     Type(NameIndex),
 
-    Binary(Box<Expression>, BinaryOperator, Box<Expression>),
-    Unary(UnaryOperator, Box<Expression>),
-    Logical(Box<Expression>, LogicalOperator, Box<Expression>),
+    Binary(Box<Expression>, Operator, Box<Expression>),
+    Unary(Operator, Box<Expression>),
 
     Function(FunctionIndex),
 
     Match {
-        matchable: Box<Expression>,
-        patterns: Vec<Expression>,
+        scrutinee: Box<Expression>,
+        arms: Vec<(Pattern, Expression)>,
     },
 
     Call {
         callee: Box<Expression>,
         function_id: FunctionIndex,
-        args: Vec<Expression>,
+        args: Vec<Pattern>,
     },
 
     Get {
@@ -42,26 +42,4 @@ pub enum Expression {
         block_name: NameIndex,
         block: Box<Expression>,
     },
-    Pattern {
-        name: Option<NameIndex>,
-        value: Box<Expression>,
-    },
-}
-
-impl Expression {
-    pub fn is_constexpr(&self) -> bool {
-        use Expression::*;
-
-        match self {
-            Literal(_) => true,
-            Grouping(expr) => expr.is_constexpr(),
-            NamedBlock { block, .. } => block.is_constexpr(),
-            Block { value, .. } => value.is_constexpr(),
-            Binary(lhs, _, rhs) => lhs.is_constexpr() && rhs.is_constexpr(),
-            Logical(lhs, _, rhs) => lhs.is_constexpr() && rhs.is_constexpr(),
-            Unary(_, expr) => expr.is_constexpr(),
-            IndexOperator(expr, index) => expr.is_constexpr() && index.is_constexpr(),
-            _ => false,
-        }
-    }
 }

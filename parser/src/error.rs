@@ -11,10 +11,6 @@ pub enum ParserError {
         found: TokenType,
         line: Option<usize>,
     },
-    MissingReturnType {
-        function: String,
-        line: usize,
-    },
     InvalidAssignmentTarget(usize),
     ErrorWithMessage(Box<ParserError>, &'static str),
 }
@@ -43,13 +39,6 @@ impl Display for ParserError {
                 line: None,
             } => {
                 write!(f, "[at end] Expected {} but found {}", expected, found)
-            }
-            MissingReturnType { function, line } => {
-                write!(
-                    f,
-                    "[{}] Can not infer return type for function {}. Please add a return type",
-                    line, function
-                )
             }
             InvalidAssignmentTarget(line) => {
                 write!(f, "[{}] Invalid assignment target", line)
