@@ -18,6 +18,7 @@ pub use newtypes::*;
 pub use error::ParserError;
 pub use error::ParserResult;
 
+use operator::Operator;
 use scanner::{Token, TokenType};
 
 pub struct Parser<'a> {
@@ -143,7 +144,7 @@ impl<'a> Parser<'a> {
 
             self.consume(Equal, "Equal sign")?;
 
-            self.skip_if(&[Semicolon]);
+            self.skip_while(&[Semicolon]);
 
             let body = self.block()?;
 
@@ -164,16 +165,16 @@ impl<'a> Parser<'a> {
         let mut patterns = Vec::new();
 
         if self.is_match(&[ParenOpen]) {
-            self.skip_if(&[Semicolon]);
+            self.skip_while(&[Semicolon]);
 
             patterns.push(self.pattern()?);
 
             while self.is_match(&[Comma]) {
                 self.advance();
-                self.skip_if(&[Semicolon]);
+                self.skip_while(&[Semicolon]);
 
                 patterns.push(self.pattern()?);
-                self.skip_if(&[Semicolon]);
+                self.skip_while(&[Semicolon]);
             }
 
             self.consume(ParenClose, "Right Paranthesis")?;
@@ -285,7 +286,7 @@ impl<'a> Parser<'a> {
         if self.is_match(&[Match]) {
             let scrutinee = self.expression()?;
 
-            self.skip_if(&[Semicolon]);
+            self.skip_while(&[Semicolon]);
 
             self.consume(Indent, "Indendation start")?;
 
@@ -298,6 +299,7 @@ impl<'a> Parser<'a> {
                     self.consume(Arrow, "Arrow")?;
 
                     let expr = if self.is_match(&[Semicolon]) {
+                        self.skip_while(&[Semicolon]);
                         self.consume(Indent, "Endline")?;
                         self.block()?
                     } else {
@@ -320,7 +322,6 @@ impl<'a> Parser<'a> {
     }
 
     fn or(&mut self) -> ParserResult<Expression> {
-        use operator::Operator;
         use TokenType::Or;
 
         let mut left = self.and()?;
@@ -331,10 +332,6 @@ impl<'a> Parser<'a> {
             let right = self.and()?;
 
             left = Expression::Binary(Box::new(left), Operator::Or, Box::new(right));
-
-            // if let Some(literal_index) = self.eval_constexpr(&left)? {
-            //     left = Expression::Literal(literal_index)
-            // }
         }
 
         Ok(left)
@@ -343,6 +340,119 @@ impl<'a> Parser<'a> {
     fn and(&mut self) -> ParserResult<Expression> {
         use TokenType::And;
 
+        let mut left = self.equality()?;
+
+        while self.is_match(&[And]) {
+            self.advance();
+
+            let right = self.equality();
+
+            left = Expression::Binary(Box::new(left), Operator::And, Box::new(right?));
+        }
+
+        Ok(left)
+    }
+
+    fn equality(&mut self) -> ParserResult<Expression> {
+        use TokenType::{EqualEqual, NotEqual};
+
+        let mut left = self.comparison()?;
+
+        while self.is_match(&[EqualEqual, NotEqual]) {
+            let operator = match self.previous().kind {
+                EqualEqual => Operator::Equal,
+                NotEqual => Operator::NotEqual,
+                _ => unreachable!(),
+            };
+
+            let right = self.comparison()?;
+
+            left = Expression::Binary(Box::new(left), operator, Box::new(right));
+        }
+
+        Ok(left)
+    }
+
+    fn comparison(&mut self) -> ParserResult<Expression> {
+        use TokenType::{Greater, GreaterEqual, Less, LessEqual};
+
+        let mut left = self.term()?;
+
+        while self.is_match(&[Greater, GreaterEqual, Less, LessEqual]) {
+            let operator = match self.previous().kind {
+                Greater => Operator::Greater,
+                GreaterEqual => Operator::GreaterOrEqual,
+                Less => Operator::Smaller,
+                LessEqual => Operator::SmallerOrEqual,
+                _ => unreachable!(),
+            };
+
+            let right = self.term()?;
+
+            left = Expression::Binary(Box::new(left), operator, Box::new(right));
+        }
+
+        Ok(left)
+    }
+
+    fn term(&mut self) -> ParserResult<Expression> {
+        use TokenType::{Minus, Plus};
+
+        let mut left = self.factor()?;
+
+        while self.is_match(&[Plus, Minus]) {
+            let operator = match self.previous().kind {
+                Plus => Operator::Add,
+                Minus => Operator::Substract,
+                _ => unreachable!(),
+            };
+
+            let right = self.factor()?;
+
+            left = Expression::Binary(Box::new(left), operator, Box::new(right));
+        }
+
+        Ok(left)
+    }
+
+    fn factor(&mut self) -> ParserResult<Expression> {
+        use TokenType::{Slash, Star};
+
+        let mut left = self.unary()?;
+
+        while self.is_match(&[Star, Slash]) {
+            let operator = match self.previous().kind {
+                Star => Operator::Multiply,
+                Slash => Operator::Divide,
+                _ => unreachable!(),
+            };
+
+            let right = self.unary()?;
+            left = Expression::Binary(Box::new(left), operator, Box::new(right));
+        }
+
+        Ok(left)
+    }
+
+    fn unary(&mut self) -> ParserResult<Expression> {
+        use TokenType::{Minus, Not};
+
+        if self.is_match(&[Not, Minus]) {
+            let operator = match self.previous().kind {
+                Not => Operator::Not,
+                Minus => Operator::Negate,
+                _ => unreachable!(),
+            };
+
+            let right = self.unary()?;
+
+            Ok(Expression::Unary(operator, Box::new(right)))
+        } else {
+            self.call()
+        }
+    }
+
+    fn call(&mut self) -> ParserResult<Expression> {
         unimplemented!()
     }
 
@@ -473,8 +583,8 @@ impl<'a> Parser<'a> {
         LiteralIndex(self.literals.len())
     }
 
-    fn skip_if(&mut self, kinds: &[TokenType]) {
-        if self.is_match(kinds) {
+    fn skip_while(&mut self, kinds: &[TokenType]) {
+        while self.is_match(kinds) {
             self.advance();
         }
     }
