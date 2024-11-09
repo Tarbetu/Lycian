@@ -21,13 +21,15 @@ pub use error::ParserResult;
 use operator::Operator;
 use scanner::{Token, TokenType};
 
+use ahash::AHashMap;
+
 pub struct Parser<'a> {
     lexemes: &'a [&'a str],
     tokens: &'a [Token],
     position: usize,
-    names: Vec<Name>,
-    functions: Vec<Function>,
-    literals: Vec<Literal>,
+    names: AHashMap<usize, Name>,
+    functions: AHashMap<NameIndex, Function>,
+    literals: AHashMap<usize, Literal>,
 }
 
 impl<'a> Parser<'a> {
@@ -36,24 +38,24 @@ impl<'a> Parser<'a> {
             lexemes,
             tokens,
             position: 0,
-            names: vec![],
-            functions: vec![],
-            literals: vec![],
+            names: AHashMap::new(),
+            functions: AHashMap::new(),
+            literals: AHashMap::new(),
         }
     }
 
     pub fn get_name(&mut self, index: NameIndex) -> &Name {
-        self.names.get(index.0).expect("Invalid wildcard index")
+        self.names.get(&index.0).expect("Invalid wildcard index")
     }
 
-    pub fn get_function(&mut self, index: FunctionIndex) -> &mut Function {
+    pub fn get_function(&mut self, index: NameIndex) -> &mut Function {
         self.functions
-            .get_mut(index.0)
+            .get_mut(&index)
             .expect("Invalid function index")
     }
 
     pub fn get_literal(&self, index: LiteralIndex) -> &Literal {
-        self.literals.get(index.0).expect("Invalid literal index")
+        self.literals.get(&index.0).expect("Invalid literal index")
     }
 
     pub fn parse(&mut self) -> ParserResult<Vec<Statement>> {
@@ -148,14 +150,8 @@ impl<'a> Parser<'a> {
 
             let body = self.block()?;
 
-            Ok(Some(Method(self.push_function(
-                name,
-                None,
-                patterns,
-                return_type,
-                body,
-                decorator,
-            ))))
+            self.push_function(name, None, patterns, return_type, body, decorator);
+            Ok(Some(Method(name)))
         }
     }
 
@@ -178,6 +174,10 @@ impl<'a> Parser<'a> {
             }
 
             self.consume(ParenClose, "Right Paranthesis")?;
+        }
+
+        if patterns.len() >= 255 {
+            return Err(ParserError::PatternListTooLong(self.previous().line));
         }
 
         Ok(patterns)
@@ -268,14 +268,8 @@ impl<'a> Parser<'a> {
                 _ => return Err(ParserError::InvalidAssignmentTarget(self.previous().line)),
             };
 
-            Ok(Expression::Function(self.push_function(
-                name,
-                None,
-                params,
-                return_type,
-                value,
-                String::new(),
-            )))
+            self.push_function(name, None, params, return_type, value, String::new());
+            Ok(Expression::Function(name))
         } else {
             Ok(expr)
         }
@@ -453,6 +447,51 @@ impl<'a> Parser<'a> {
     }
 
     fn call(&mut self) -> ParserResult<Expression> {
+        use Expression::{Call, MethodCall};
+        use TokenType::{Dot, ParenClose, ParenOpen, Semicolon};
+        let mut expr = self.primary()?;
+
+        loop {
+            self.skip_while(&[Semicolon]);
+            let callee_id = self.consume_name()?;
+
+            if self.is_match(&[ParenOpen]) {
+                if self.is_match(&[ParenClose]) {
+                    return Err(ParserError::EmptyCall(self.previous().line));
+                }
+                expr = Call {
+                    callee: Box::new(expr),
+                    function_id: callee_id,
+                    args: self.arguments()?,
+                };
+            } else if self.is_match(&[Dot]) {
+                expr = MethodCall {
+                    inner_call: Box::new(expr),
+                };
+            } else {
+                break;
+            }
+        }
+
+        Ok(expr)
+    }
+
+    fn arguments(&mut self) -> ParserResult<Vec<Expression>> {
+        use TokenType::{Comma, ParenClose, Semicolon};
+
+        let mut arguments = vec![];
+        arguments.push(self.expression()?);
+
+        while self.is_match(&[Comma, Semicolon]) {
+            arguments.push(self.expression()?);
+        }
+
+        self.consume(ParenClose, "")?;
+
+        Ok(arguments)
+    }
+
+    fn primary(&mut self) -> ParserResult<Expression> {
         unimplemented!()
     }
 
@@ -549,7 +588,7 @@ impl<'a> Parser<'a> {
             Wildcard => Name::Private(string),
             _ => unreachable!(),
         };
-        self.names.push(name);
+        self.names.insert(self.names.len(), name);
 
         index
     }
@@ -562,25 +601,25 @@ impl<'a> Parser<'a> {
         return_type: Option<Expression>,
         body: Expression,
         decorator: String,
-    ) -> FunctionIndex {
-        let index = FunctionIndex(self.functions.len());
-
-        self.functions.push(Function {
+    ) {
+        self.functions.insert(
             name,
-            class,
-            params,
-            return_type,
-            body,
-            decorator,
-        });
-
-        index
+            Function {
+                name,
+                class,
+                params,
+                return_type,
+                body,
+                decorator,
+            },
+        );
     }
 
     fn push_literal(&mut self, literal: Literal) -> LiteralIndex {
-        self.literals.push(literal);
+        let next_index = self.literals.len();
+        self.literals.insert(next_index, literal);
 
-        LiteralIndex(self.literals.len())
+        LiteralIndex(next_index)
     }
 
     fn skip_while(&mut self, kinds: &[TokenType]) {
@@ -589,7 +628,6 @@ impl<'a> Parser<'a> {
         }
     }
 
-    // TODO: change self.literals as hashmap and remove unused items
     fn eval_constexpr(&mut self, expr: &Expression) -> ParserResult<Option<LiteralIndex>> {
         use operator::*;
         use Expression::*;
@@ -598,14 +636,14 @@ impl<'a> Parser<'a> {
             Literal(literal_index) => Some(*literal_index),
             Grouping(expr) => self.eval_constexpr(expr)?,
             Binary(lhs, op, rhs) => {
-                let Some(lhs) = self.eval_constexpr(lhs)? else {
+                let Some(lhs_index) = self.eval_constexpr(lhs)? else {
                     return Ok(None);
                 };
-                let Some(rhs) = self.eval_constexpr(rhs)? else {
+                let Some(rhs_index) = self.eval_constexpr(rhs)? else {
                     return Ok(None);
                 };
-                let lhs = self.get_literal(lhs);
-                let rhs = self.get_literal(rhs);
+                let lhs = self.get_literal(lhs_index);
+                let rhs = self.get_literal(rhs_index);
                 (match op {
                     Operator::Add => lhs + rhs,
                     Operator::Substract => lhs - rhs,
@@ -623,33 +661,42 @@ impl<'a> Parser<'a> {
                     Operator::SmallerOrEqual => lhs.less_equal(rhs),
                     _ => unreachable!(),
                 })
-                .map(|literal| self.push_literal(literal))
+                .map(|literal| {
+                    self.literals.remove(&lhs_index.0);
+                    self.literals.remove(&rhs_index.0);
+                    self.push_literal(literal)
+                })
             }
             Unary(op, expression) => {
-                let Some(expr) = self.eval_constexpr(expression)? else {
+                let Some(expr_index) = self.eval_constexpr(expression)? else {
                     return Ok(None);
                 };
-                let expr = self.get_literal(expr);
+                let expr = self.get_literal(expr_index);
                 (match op {
                     Operator::Not => !expr,
                     Operator::Negate => -expr,
                     _ => unreachable!(),
                 })
-                .map(|literal| self.push_literal(literal))
+                .map(|literal| {
+                    self.literals.remove(&expr_index.0);
+                    self.push_literal(literal)
+                })
             }
-            IndexOperator(container, index) => {
-                let Some(container) = self.eval_constexpr(container)? else {
+            IndexOperator(container, search) => {
+                let Some(container_index) = self.eval_constexpr(container)? else {
                     return Ok(None);
                 };
-                let Some(index) = self.eval_constexpr(index)? else {
+                let Some(search_index) = self.eval_constexpr(search)? else {
                     return Ok(None);
                 };
-                let container = self.get_literal(container);
-                let index = self.get_literal(index);
+                let container = self.get_literal(container_index);
+                let search = self.get_literal(search_index);
 
-                container
-                    .get(index)
-                    .map(|literal| self.push_literal(literal))
+                container.get(search).map(|literal| {
+                    self.literals.remove(&container_index.0);
+                    self.literals.remove(&search_index.0);
+                    self.push_literal(literal)
+                })
             }
 
             _ => unimplemented!(),

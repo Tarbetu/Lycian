@@ -19,8 +19,4 @@ impl Function {
     pub fn no_memoization(&self) -> bool {
         self.decorator == "memoization:false"
     }
-
-    pub fn is_constexpr(&self) -> bool {
-        self.body.is_constexpr()
-    }
 }

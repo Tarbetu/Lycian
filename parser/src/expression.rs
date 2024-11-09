@@ -1,7 +1,7 @@
 use crate::operator::*;
 use crate::LiteralIndex;
+use crate::NameIndex;
 use crate::Pattern;
-use crate::{FunctionIndex, NameIndex};
 
 #[derive(Debug, PartialEq)]
 pub enum Expression {
@@ -12,7 +12,7 @@ pub enum Expression {
     Binary(Box<Expression>, Operator, Box<Expression>),
     Unary(Operator, Box<Expression>),
 
-    Function(FunctionIndex),
+    Function(NameIndex),
 
     Match {
         scrutinee: Box<Expression>,
@@ -21,19 +21,18 @@ pub enum Expression {
 
     Call {
         callee: Box<Expression>,
-        function_id: FunctionIndex,
-        args: Vec<Pattern>,
+        function_id: NameIndex,
+        args: Vec<Expression>,
     },
 
-    Get {
-        callee: Box<Expression>,
-        function_id: FunctionIndex,
+    MethodCall {
+        inner_call: Box<Expression>,
     },
 
     IndexOperator(Box<Expression>, Box<Expression>),
 
     ClassSelf,
-    Super(FunctionIndex),
+    Super(NameIndex),
     Block {
         expressions: Vec<Expression>,
         value: Box<Expression>,

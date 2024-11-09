@@ -12,6 +12,8 @@ pub enum ParserError {
         line: Option<usize>,
     },
     InvalidAssignmentTarget(usize),
+    PatternListTooLong(usize),
+    EmptyCall(usize),
     ErrorWithMessage(Box<ParserError>, &'static str),
 }
 
@@ -42,6 +44,12 @@ impl Display for ParserError {
             }
             InvalidAssignmentTarget(line) => {
                 write!(f, "[{}] Invalid assignment target", line)
+            }
+            PatternListTooLong(line) => {
+                write!(f, "[{}] Too many patterns in pattern list", line)
+            }
+            EmptyCall(line) => {
+                write!(f, "[{}] You can not call a function with empty parentheses.\nJust call with its name.", line)
             }
             ErrorWithMessage(err, msg) => {
                 write!(f, "{}\n{}", err, msg)

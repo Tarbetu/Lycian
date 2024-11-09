@@ -1,10 +1,7 @@
 use std::fmt::Display;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct NameIndex(pub usize);
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct FunctionIndex(pub usize);
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LiteralIndex(pub usize);
@@ -27,9 +24,9 @@ pub enum Name {
 impl Display for Name {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Name::Public(name) => write!(f, "{}", name),
-            Name::Protected(name) => write!(f, "{}", name),
-            Name::Private(name) => write!(f, "{}", name),
+            Name::Public(name) | Name::Protected(name) | Name::Private(name) => {
+                write!(f, "{}", name)
+            }
         }
     }
 }
