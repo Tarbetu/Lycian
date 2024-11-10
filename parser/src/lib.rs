@@ -81,7 +81,7 @@ impl<'a> Parser<'a> {
 
         let decorator = self.consume_decorator()?;
 
-        let name = self.consume_name()?;
+        let name = self.consume_class_name()?;
 
         self.consume(Colon, "':'")?;
         self.consume(Endline, "End of line")?;
@@ -90,11 +90,11 @@ impl<'a> Parser<'a> {
         let mut implementing_list = Vec::new();
 
         if self.is_match(&[TokenType::Implementing]) {
-            implementing_list.push(self.consume_name()?);
+            implementing_list.push(self.consume_class_name()?);
 
             while let Some(TokenType::Implementing) = self.peek().map(|t| t.kind) {
                 self.advance();
-                implementing_list.push(self.consume_name()?);
+                implementing_list.push(self.consume_class_name()?);
             }
         }
 
@@ -196,12 +196,12 @@ impl<'a> Parser<'a> {
 
                 let value = self.expression()?;
 
-                (Some(name), value)
+                (Some(name), Some(value))
             } else {
-                (None, Expression::Type(name))
+                (Some(name), None)
             }
         } else {
-            (None, self.expression()?)
+            (None, Some(self.expression()?))
         };
 
         let condition = if self.is_match(&[When]) {
@@ -248,6 +248,7 @@ impl<'a> Parser<'a> {
         use TokenType::*;
 
         let expr = self.match_expr()?;
+        let token = self.peek();
 
         if self.is_match(&[ParenOpen]) {
             let params = self.pattern_list()?;
@@ -263,10 +264,7 @@ impl<'a> Parser<'a> {
 
             let value = self.block()?;
 
-            let name = match expr {
-                Expression::Type(name) => name,
-                _ => return Err(ParserError::InvalidAssignmentTarget(self.previous().line)),
-            };
+            let name = self.consume_name_from_token(token, "Function Name")?;
 
             self.push_function(name, None, params, return_type, value, String::new());
             Ok(Expression::Function(name))
@@ -339,9 +337,9 @@ impl<'a> Parser<'a> {
         while self.is_match(&[And]) {
             self.advance();
 
-            let right = self.equality();
+            let right = self.equality()?;
 
-            left = Expression::Binary(Box::new(left), Operator::And, Box::new(right?));
+            left = Expression::Binary(Box::new(left), Operator::And, Box::new(right));
         }
 
         Ok(left)
@@ -479,6 +477,8 @@ impl<'a> Parser<'a> {
     fn arguments(&mut self) -> ParserResult<Vec<Expression>> {
         use TokenType::{Comma, ParenClose, Semicolon};
 
+        self.skip_while(&[Semicolon]);
+
         let mut arguments = vec![];
         arguments.push(self.expression()?);
 
@@ -492,7 +492,59 @@ impl<'a> Parser<'a> {
     }
 
     fn primary(&mut self) -> ParserResult<Expression> {
-        unimplemented!()
+        use TokenType::{ClassSelf, InterpolatedString, ParenClose, ParenOpen, Super};
+
+        Ok(if self.is_match(&[ParenOpen]) {
+            let expr = self.expression()?;
+            self.consume(ParenClose, "Right Paranthesis")?;
+            Expression::Grouping(Box::new(expr))
+        } else if self.is_match(&[ClassSelf]) {
+            self.advance();
+            Expression::ClassSelf
+        } else if self.is_match(&[Super]) {
+            self.advance();
+            Expression::Super
+        } else if self.is_match(&[InterpolatedString]) {
+            let token = self.peek().unwrap();
+            let string = self.lexemes[token.start..token.end].join("");
+
+            unimplemented!()
+        } else {
+            Expression::Literal(self.literal()?)
+        })
+    }
+
+    fn literal(&mut self) -> ParserResult<LiteralIndex> {
+        use TokenType::{BasicString, False, Float, Integer, True};
+
+        let res = if self.is_match(&[True]) {
+            Literal::Boolean(true)
+        } else if self.is_match(&[False]) {
+            Literal::Boolean(false)
+        } else if self.is_match(&[Integer, Float]) {
+            let token = self.peek().unwrap();
+            let incomplete =
+                rug::Float::parse(self.lexemes[token.start..token.end].join("")).unwrap();
+            let number = rug::Float::with_val(literal::PRECISION, incomplete);
+
+            match token.kind {
+                Float => Literal::Float(number),
+                Integer => Literal::Integer(number),
+                _ => unimplemented!(),
+            }
+        } else if self.is_match(&[BasicString]) {
+            let token = self.peek().unwrap();
+            let string = self.lexemes[token.start..token.end].join("");
+            Literal::Str(string)
+        } else {
+            return Err(ParserError::UnexpectedToken {
+                expected: "Expression",
+                found: self.peek().unwrap().kind,
+                line: self.peek().map(|t| t.line),
+            });
+        };
+
+        Ok(self.push_literal(res))
     }
 
     fn peek(&self) -> Option<Token> {
@@ -537,11 +589,23 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
+    fn consume_class_name(&mut self) -> ParserResult<NameIndex> {
+        self.consume_name_from_token(self.peek(), "Class Name")
+    }
+
     fn consume_name(&mut self) -> ParserResult<NameIndex> {
+        self.consume_name_from_token(self.peek(), "Name")
+    }
+
+    fn consume_name_from_token(
+        &mut self,
+        token: Option<Token>,
+        expected: &'static str,
+    ) -> ParserResult<NameIndex> {
         use ParserError::UnexpectedToken;
         use TokenType::{Constant, Identifier, Wildcard};
 
-        match self.peek() {
+        match token {
             Some(token)
                 if token.kind == Constant || token.kind == Identifier || token.kind == Wildcard =>
             {
@@ -549,12 +613,12 @@ impl<'a> Parser<'a> {
                 Ok(self.push_name(&token))
             }
             Some(token) => Err(UnexpectedToken {
-                expected: "Class Name",
+                expected,
                 found: token.kind,
                 line: Some(token.line),
             }),
             None => Err(UnexpectedToken {
-                expected: "Class Name",
+                expected,
                 found: TokenType::Eof,
                 line: None,
             }),

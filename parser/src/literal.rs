@@ -1,6 +1,8 @@
 use ahash::AHashMap;
-use rug::Float as RugFloat;
+pub use rug::Float as RugFloat;
 use std::ops::*;
+
+pub const PRECISION: u32 = 64;
 
 // TODO: Use Rug
 #[derive(Clone, Debug)]
@@ -251,5 +253,5 @@ fn rug<T>(value: T) -> RugFloat
 where
     RugFloat: rug::Assign<T>,
 {
-    RugFloat::with_val(64, value)
+    RugFloat::with_val(PRECISION, value)
 }

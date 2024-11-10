@@ -7,7 +7,6 @@ use crate::Pattern;
 pub enum Expression {
     Literal(LiteralIndex),
     Grouping(Box<Expression>),
-    Type(NameIndex),
 
     Binary(Box<Expression>, Operator, Box<Expression>),
     Unary(Operator, Box<Expression>),
@@ -32,13 +31,11 @@ pub enum Expression {
     IndexOperator(Box<Expression>, Box<Expression>),
 
     ClassSelf,
-    Super(NameIndex),
+    Super,
     Block {
         expressions: Vec<Expression>,
         value: Box<Expression>,
     },
-    NamedBlock {
-        block_name: NameIndex,
-        block: Box<Expression>,
-    },
+
+    InterpolatedString(LiteralIndex, Vec<Expression>),
 }
