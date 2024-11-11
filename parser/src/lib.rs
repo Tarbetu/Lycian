@@ -492,7 +492,7 @@ impl<'a> Parser<'a> {
     }
 
     fn primary(&mut self) -> ParserResult<Expression> {
-        use TokenType::{ClassSelf, InterpolatedString, ParenClose, ParenOpen, Super};
+        use TokenType::{ClassSelf, ParenClose, ParenOpen, Super};
 
         Ok(if self.is_match(&[ParenOpen]) {
             let expr = self.expression()?;
@@ -504,18 +504,13 @@ impl<'a> Parser<'a> {
         } else if self.is_match(&[Super]) {
             self.advance();
             Expression::Super
-        } else if self.is_match(&[InterpolatedString]) {
-            let token = self.peek().unwrap();
-            let string = self.lexemes[token.start..token.end].join("");
-
-            unimplemented!()
         } else {
             Expression::Literal(self.literal()?)
         })
     }
 
     fn literal(&mut self) -> ParserResult<LiteralIndex> {
-        use TokenType::{BasicString, False, Float, Integer, True};
+        use TokenType::{False, Float, Integer, Str, True};
 
         let res = if self.is_match(&[True]) {
             Literal::Boolean(true)
@@ -532,7 +527,7 @@ impl<'a> Parser<'a> {
                 Integer => Literal::Integer(number),
                 _ => unimplemented!(),
             }
-        } else if self.is_match(&[BasicString]) {
+        } else if self.is_match(&[Str]) {
             let token = self.peek().unwrap();
             let string = self.lexemes[token.start..token.end].join("");
             Literal::Str(string)

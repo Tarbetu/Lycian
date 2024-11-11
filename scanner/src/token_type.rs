@@ -37,8 +37,7 @@ pub enum TokenType {
     Constant,
     Wildcard,
     CharLiteral,
-    BasicString,
-    InterpolatedString,
+    Str,
     Integer,
     Float,
 

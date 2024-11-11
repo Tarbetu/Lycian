@@ -264,25 +264,14 @@ impl<'a> Scanner<'a> {
     }
 
     fn string(&mut self) -> (usize, TokenType) {
-        use TokenType::{BasicString, InterpolatedString, UnterminatedString};
+        use TokenType::{Str, UnterminatedString};
 
-        let mut interpolated = false;
         loop {
             if let Some(&(_, char)) = self.chars.peek() {
                 match char {
-                    '#' => {
-                        self.chars.next();
-                        if let Some(&(_, '{')) = self.chars.peek() {
-                            interpolated = true;
-                        }
-                    }
                     '"' => {
                         let current = self.chars.next().map(|(i, _)| i).unwrap_or(self.max) + 1;
-                        return if interpolated {
-                            (current, InterpolatedString)
-                        } else {
-                            (current, BasicString)
-                        };
+                        return (current, Str);
                     }
                     '\n' => {
                         self.line += 1;
@@ -587,27 +576,17 @@ mod tests {
 
     #[test]
     fn tokenize_empty_string() {
-        assert_for_single_token("\"\"", BasicString);
+        assert_for_single_token("\"\"", Str);
     }
 
     #[test]
     fn tokenize_basicstring() {
-        assert_for_single_token("\"I shall became manifest!\"", BasicString);
+        assert_for_single_token("\"I shall became manifest!\"", Str);
     }
 
     #[test]
     fn tokenize_non_ascii_basic_string() {
-        assert_for_single_token("\"şuşter\"", BasicString);
-    }
-
-    #[test]
-    fn tokenize_interpolatedstring() {
-        assert_for_single_token("\"I shall became #{manifest}!\"", InterpolatedString);
-    }
-
-    #[test]
-    fn tokenize_non_ascii_interpolatedstring() {
-        assert_for_single_token("\"#{şuşter}\"", InterpolatedString);
+        assert_for_single_token("\"şuşter\"", Str);
     }
 
     #[test]
@@ -805,52 +784,12 @@ IO.puts(Constant().function)
         assert_for_tokens(
             source,
             &[
-                Constant,
-                Colon,
-                Semicolon,
-                Indent,
-                Identifier,
-                Equal,
-                Semicolon,
-                Indent,
-                Match,
-                Identifier,
-                Colon,
-                Semicolon,
-                Indent,
-                Integer,
-                Arrow,
-                Identifier,
-                ParenOpen,
-                ParenClose,
-                Semicolon,
-                Integer,
-                Arrow,
-                Semicolon,
-                Indent,
-                Identifier,
-                ParenOpen,
-                ParenClose,
-                Semicolon,
-                Dedent,
-                Dedent,
-                Dedent,
-                Identifier,
-                Equal,
-                BasicString,
-                Semicolon,
-                Dedent,
-                Constant,
-                Dot,
-                Identifier,
-                ParenOpen,
-                Constant,
-                ParenOpen,
-                ParenClose,
-                Dot,
-                Identifier,
-                ParenClose,
-                Semicolon,
+                Constant, Colon, Semicolon, Indent, Identifier, Equal, Semicolon, Indent, Match,
+                Identifier, Colon, Semicolon, Indent, Integer, Arrow, Identifier, ParenOpen,
+                ParenClose, Semicolon, Integer, Arrow, Semicolon, Indent, Identifier, ParenOpen,
+                ParenClose, Semicolon, Dedent, Dedent, Dedent, Identifier, Equal, Str, Semicolon,
+                Dedent, Constant, Dot, Identifier, ParenOpen, Constant, ParenOpen, ParenClose, Dot,
+                Identifier, ParenClose, Semicolon,
             ],
         )
     }
