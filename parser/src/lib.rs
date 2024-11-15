@@ -146,9 +146,7 @@ impl<'a> Parser<'a> {
 
             self.consume(Equal, "Equal sign")?;
 
-            self.skip_while(&[Semicolon]);
-
-            let body = self.block()?;
+            let body = self.block(false, Some("Method"))?;
 
             self.push_function(name, None, patterns, return_type, body, decorator);
             Ok(Some(Method(name)))
@@ -217,8 +215,31 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn block(&mut self) -> ParserResult<Expression> {
-        use TokenType::{Dedent, Semicolon};
+    fn block(
+        &mut self,
+        params_expected: bool,
+        context_info: Option<&'static str>,
+    ) -> ParserResult<Expression> {
+        use TokenType::{Dedent, Pipe, Semicolon};
+
+        let params = if self.is_match(&[Pipe]) {
+            let result = self.pattern_list()?;
+            self.consume(Pipe, "| symbol")?;
+            result
+        } else {
+            vec![]
+        };
+
+        if !(params.is_empty() && params_expected) {
+            return Err(ParserError::UnexpectedBlockParams(
+                self.previous().line,
+                context_info.unwrap(),
+            ));
+        }
+
+        self.consume(Semicolon, "Endline")?;
+
+        self.skip_while(&[Semicolon]);
 
         let mut expressions = vec![];
 
@@ -236,6 +257,7 @@ impl<'a> Parser<'a> {
             Ok(Expression::Block {
                 expressions,
                 value: Box::new(value),
+                params,
             })
         }
     }
@@ -262,7 +284,7 @@ impl<'a> Parser<'a> {
 
             self.consume(Equal, "Equal sign")?;
 
-            let value = self.block()?;
+            let value = self.block(false, Some("Function"))?;
 
             let name = self.consume_name_from_token(token, "Function Name")?;
 
@@ -293,7 +315,7 @@ impl<'a> Parser<'a> {
                     let expr = if self.is_match(&[Semicolon]) {
                         self.skip_while(&[Semicolon]);
                         self.consume(Indent, "Endline")?;
-                        self.block()?
+                        self.block(true, None)?
                     } else {
                         self.expression()?
                     };
@@ -446,7 +468,7 @@ impl<'a> Parser<'a> {
 
     fn call(&mut self) -> ParserResult<Expression> {
         use Expression::{Call, MethodCall};
-        use TokenType::{Dot, ParenClose, ParenOpen, Semicolon};
+        use TokenType::{Colon, Dot, ParenClose, ParenOpen, Semicolon};
         let mut expr = self.primary()?;
 
         loop {
@@ -454,13 +476,21 @@ impl<'a> Parser<'a> {
             let callee_id = self.consume_name()?;
 
             if self.is_match(&[ParenOpen]) {
-                if self.is_match(&[ParenClose]) {
-                    return Err(ParserError::EmptyCall(self.previous().line));
-                }
+                let args = if self.is_match(&[ParenClose]) {
+                    vec![]
+                } else {
+                    self.arguments()?
+                };
+                let block = if self.is_match(&[Colon]) {
+                    Some(Box::new(self.block(true, None)?))
+                } else {
+                    None
+                };
                 expr = Call {
                     callee: Box::new(expr),
                     function_id: callee_id,
-                    args: self.arguments()?,
+                    args,
+                    block,
                 };
             } else if self.is_match(&[Dot]) {
                 expr = MethodCall {

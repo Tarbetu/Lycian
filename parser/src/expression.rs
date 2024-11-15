@@ -22,6 +22,7 @@ pub enum Expression {
         callee: Box<Expression>,
         function_id: NameIndex,
         args: Vec<Expression>,
+        block: Option<Box<Expression>>,
     },
 
     MethodCall {
@@ -35,6 +36,7 @@ pub enum Expression {
     Block {
         expressions: Vec<Expression>,
         value: Box<Expression>,
+        params: Vec<Pattern>,
     },
 
     InterpolatedString(LiteralIndex, Vec<Expression>),
