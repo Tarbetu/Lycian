@@ -4,6 +4,11 @@ use std::ops::*;
 
 pub const PRECISION: u32 = 64;
 
+use crate::Expression;
+use either::Either;
+
+pub type MaybeLiteral = Either<Expression, Literal>;
+
 // TODO: Use Rug
 #[derive(Clone, Debug)]
 pub enum Literal {
@@ -12,8 +17,8 @@ pub enum Literal {
     Boolean(bool),
     Char(u32),
     Str(String),
-    LiteralList(Vec<Literal>),
-    LiteralMap(AHashMap<Literal, Literal>),
+    LiteralList(Vec<MaybeLiteral>),
+    LiteralMap(AHashMap<MaybeLiteral, MaybeLiteral>),
 }
 
 impl Add for &Literal {
@@ -190,8 +195,16 @@ impl Literal {
         use Literal::{Boolean, LiteralList, LiteralMap};
 
         match (self, rhs) {
-            (lhs, LiteralList(rhs)) => Some(Boolean(rhs.iter().any(|x| x == lhs))),
-            (lhs, LiteralMap(rhs)) => Some(Boolean(rhs.keys().any(|x| x == lhs))),
+            (lhs, LiteralList(rhs)) => {
+                Some(Boolean(rhs.iter().any(|x| {
+                    x.as_ref().right().map(|x| x == lhs).unwrap_or(false)
+                })))
+            }
+            (lhs, LiteralMap(rhs)) => {
+                Some(Boolean(rhs.keys().any(|x| {
+                    x.as_ref().right().map(|x| x == lhs).unwrap_or(false)
+                })))
+            }
             _ => None,
         }
     }
@@ -233,7 +246,7 @@ impl Literal {
         self.greater(rhs).and_then(|x| x.not())
     }
 
-    pub fn get(&self, key: &Self) -> Option<Self> {
+    pub fn get(&self, key: &Self) -> Option<MaybeLiteral> {
         use Literal::{Integer, LiteralList, LiteralMap};
 
         match (self, key) {
@@ -241,9 +254,10 @@ impl Literal {
                 .to_integer()
                 .and_then(|int| int.to_usize())
                 .and_then(|index| list.get(index).cloned()),
-            (LiteralMap(map), ref key) => {
-                map.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone())
-            }
+            (LiteralMap(map), ref key) => map
+                .iter()
+                .find(|(k, _)| k.as_ref().right().map(|k| &k == key).unwrap_or(false))
+                .map(|(_, v)| v.clone()),
             _ => unreachable!(),
         }
     }

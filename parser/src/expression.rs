@@ -3,7 +3,7 @@ use crate::LiteralIndex;
 use crate::NameIndex;
 use crate::Pattern;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Expression {
     Literal(LiteralIndex),
     Grouping(Box<Expression>),
@@ -38,6 +38,4 @@ pub enum Expression {
         value: Box<Expression>,
         params: Vec<Pattern>,
     },
-
-    InterpolatedString(LiteralIndex, Vec<Expression>),
 }

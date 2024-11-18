@@ -9,9 +9,10 @@ mod statement;
 
 pub use crate::literal::*;
 pub use expression::Expression;
+pub use statement::Statement;
+
 pub use function::Function;
 pub use pattern::Pattern;
-pub use statement::Statement;
 
 pub use newtypes::*;
 
@@ -22,6 +23,7 @@ use operator::Operator;
 use scanner::{Token, TokenType};
 
 use ahash::AHashMap;
+use either::Either;
 
 pub struct Parser<'a> {
     lexemes: &'a [&'a str],
@@ -163,12 +165,10 @@ impl<'a> Parser<'a> {
 
             patterns.push(self.pattern()?);
 
-            while self.is_match(&[Comma]) {
-                self.advance();
+            while self.is_match(&[Comma, Semicolon]) {
                 self.skip_while(&[Semicolon]);
 
                 patterns.push(self.pattern()?);
-                self.skip_while(&[Semicolon]);
             }
 
             self.consume(ParenClose, "Right Paranthesis")?;
@@ -188,10 +188,6 @@ impl<'a> Parser<'a> {
             let name = self.push_name(&self.peek().unwrap());
 
             if self.is_match(&[Colon]) {
-                if self.is_match(&[Colon]) {
-                    self.advance();
-                }
-
                 let value = self.expression()?;
 
                 (Some(name), Some(value))
@@ -252,7 +248,7 @@ impl<'a> Parser<'a> {
         let value = expressions.pop().unwrap();
 
         if let Some(value) = self.eval_constexpr(&value)? {
-            Ok(Expression::Literal(value))
+            Ok(value)
         } else {
             Ok(Expression::Block {
                 expressions,
@@ -535,12 +531,12 @@ impl<'a> Parser<'a> {
             self.advance();
             Expression::Super
         } else {
-            Expression::Literal(self.literal()?)
+            Expression::Literal(self.catch_literal()?)
         })
     }
 
-    fn literal(&mut self) -> ParserResult<LiteralIndex> {
-        use TokenType::{False, Float, Integer, Str, True};
+    fn catch_literal(&mut self) -> ParserResult<LiteralIndex> {
+        use TokenType::*;
 
         let res = if self.is_match(&[True]) {
             Literal::Boolean(true)
@@ -561,6 +557,42 @@ impl<'a> Parser<'a> {
             let token = self.peek().unwrap();
             let string = self.lexemes[token.start..token.end].join("");
             Literal::Str(string)
+        } else if self.is_match(&[BraceOpen]) {
+            unimplemented!()
+        } else if self.is_match(&[BracketOpen]) {
+            if self.is_match(&[BracketClose]) {
+                Literal::LiteralList(vec![])
+            } else {
+                let mut list = vec![];
+
+                let first_expr = self.expression()?;
+
+                list.push(match self.eval_constexpr(&first_expr)? {
+                    Some(Expression::Literal(index)) => {
+                        let literal = self.literals.remove(&index.0).unwrap();
+                        Either::Right(literal)
+                    }
+                    Some(expr) => Either::Left(expr),
+                    None => Either::Left(first_expr),
+                });
+
+                while self.is_match(&[Comma]) {
+                    self.skip_while(&[Semicolon]);
+
+                    let expr = self.expression()?;
+
+                    list.push(match self.eval_constexpr(&expr)? {
+                        Some(Expression::Literal(index)) => {
+                            let literal = self.literals.remove(&index.0).unwrap();
+                            Either::Right(literal)
+                        }
+                        Some(expr) => Either::Left(expr),
+                        None => Either::Left(expr),
+                    });
+                }
+
+                Literal::LiteralList(list)
+            }
         } else {
             return Err(ParserError::UnexpectedToken {
                 expected: "Expression",
@@ -677,9 +709,20 @@ impl<'a> Parser<'a> {
             Wildcard => Name::Private(string),
             _ => unreachable!(),
         };
-        self.names.insert(self.names.len(), name);
+
+        let next_index = *self.names.keys().max().unwrap_or(&0);
+
+        self.names.insert(next_index, name);
 
         index
+    }
+
+    fn push_literal(&mut self, literal: Literal) -> LiteralIndex {
+        let next_index = *self.literals.keys().max().unwrap_or(&0);
+
+        self.literals.insert(next_index, literal);
+
+        LiteralIndex(next_index)
     }
 
     fn push_function(
@@ -704,31 +747,24 @@ impl<'a> Parser<'a> {
         );
     }
 
-    fn push_literal(&mut self, literal: Literal) -> LiteralIndex {
-        let next_index = self.literals.len();
-        self.literals.insert(next_index, literal);
-
-        LiteralIndex(next_index)
-    }
-
     fn skip_while(&mut self, kinds: &[TokenType]) {
         while self.is_match(kinds) {
             self.advance();
         }
     }
 
-    fn eval_constexpr(&mut self, expr: &Expression) -> ParserResult<Option<LiteralIndex>> {
+    fn eval_constexpr(&mut self, expr: &Expression) -> ParserResult<Option<Expression>> {
         use operator::*;
         use Expression::*;
 
         Ok(match expr {
-            Literal(literal_index) => Some(*literal_index),
+            Literal(index) => Some(Expression::Literal(*index)),
             Grouping(expr) => self.eval_constexpr(expr)?,
             Binary(lhs, op, rhs) => {
-                let Some(lhs_index) = self.eval_constexpr(lhs)? else {
+                let Some(Literal(lhs_index)) = self.eval_constexpr(lhs)? else {
                     return Ok(None);
                 };
-                let Some(rhs_index) = self.eval_constexpr(rhs)? else {
+                let Some(Literal(rhs_index)) = self.eval_constexpr(rhs)? else {
                     return Ok(None);
                 };
                 let lhs = self.get_literal(lhs_index);
@@ -753,11 +789,11 @@ impl<'a> Parser<'a> {
                 .map(|literal| {
                     self.literals.remove(&lhs_index.0);
                     self.literals.remove(&rhs_index.0);
-                    self.push_literal(literal)
+                    Literal(self.push_literal(literal))
                 })
             }
             Unary(op, expression) => {
-                let Some(expr_index) = self.eval_constexpr(expression)? else {
+                let Some(Literal(expr_index)) = self.eval_constexpr(expression)? else {
                     return Ok(None);
                 };
                 let expr = self.get_literal(expr_index);
@@ -768,14 +804,14 @@ impl<'a> Parser<'a> {
                 })
                 .map(|literal| {
                     self.literals.remove(&expr_index.0);
-                    self.push_literal(literal)
+                    Literal(self.push_literal(literal))
                 })
             }
             IndexOperator(container, search) => {
-                let Some(container_index) = self.eval_constexpr(container)? else {
+                let Some(Literal(container_index)) = self.eval_constexpr(container)? else {
                     return Ok(None);
                 };
-                let Some(search_index) = self.eval_constexpr(search)? else {
+                let Some(Literal(search_index)) = self.eval_constexpr(search)? else {
                     return Ok(None);
                 };
                 let container = self.get_literal(container_index);
@@ -784,11 +820,14 @@ impl<'a> Parser<'a> {
                 container.get(search).map(|literal| {
                     self.literals.remove(&container_index.0);
                     self.literals.remove(&search_index.0);
-                    self.push_literal(literal)
+                    match literal {
+                        Either::Left(expr) => expr,
+                        Either::Right(literal) => Literal(self.push_literal(literal)),
+                    }
                 })
             }
 
-            _ => unimplemented!(),
+            _ => None,
         })
     }
 }
