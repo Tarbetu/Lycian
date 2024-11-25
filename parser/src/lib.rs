@@ -236,6 +236,8 @@ impl<'a> Parser<'a> {
             ));
         }
 
+        self.consume(Semicolon, "Endline")?;
+
         self.skip_while(&[Semicolon]);
 
         let mut expressions = vec![];
