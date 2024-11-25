@@ -1,3 +1,4 @@
+mod class;
 mod error;
 mod expression;
 mod function;
@@ -7,7 +8,10 @@ mod operator;
 mod pattern;
 mod statement;
 
+use std::mem::swap;
+
 pub use crate::literal::*;
+use class::Class;
 pub use expression::Expression;
 pub use statement::Statement;
 
@@ -29,9 +33,10 @@ pub struct Parser<'a> {
     lexemes: &'a [&'a str],
     tokens: &'a [Token],
     position: usize,
-    names: AHashMap<usize, Name>,
-    functions: AHashMap<NameIndex, Function>,
-    literals: AHashMap<usize, Literal>,
+    names: AHashMap<NameIndex, Name>,
+    literals: AHashMap<LiteralIndex, Literal>,
+    current_methods: AHashMap<NameIndex, Vec<Function>>,
+    current_environment: AHashMap<NameIndex, Vec<Function>>,
 }
 
 impl<'a> Parser<'a> {
@@ -41,33 +46,30 @@ impl<'a> Parser<'a> {
             tokens,
             position: 0,
             names: AHashMap::new(),
-            functions: AHashMap::new(),
+            current_methods: AHashMap::new(),
+            current_environment: AHashMap::new(),
             literals: AHashMap::new(),
         }
     }
 
     pub fn get_name(&mut self, index: NameIndex) -> &Name {
-        self.names.get(&index.0).expect("Invalid wildcard index")
-    }
-
-    pub fn get_function(&mut self, index: NameIndex) -> &mut Function {
-        self.functions
-            .get_mut(&index)
-            .expect("Invalid function index")
+        self.names.get(&index).expect("Invalid name index")
     }
 
     pub fn get_literal(&self, index: LiteralIndex) -> &Literal {
-        self.literals.get(&index.0).expect("Invalid literal index")
+        self.literals.get(&index).expect("Invalid literal index")
     }
 
-    pub fn parse(&mut self) -> ParserResult<Vec<Statement>> {
-        let mut classes = Vec::new();
+    pub fn parse(&mut self) -> ParserResult<AHashMap<NameIndex, Class>> {
+        let mut classes = AHashMap::new();
 
         while self.peek().is_some() {
             let program = self.class();
 
             match program {
-                Ok(class) => classes.push(class),
+                Ok(class) => {
+                    classes.insert(class.name, class);
+                }
                 Err(e) => {
                     return Err(e);
                 }
@@ -77,7 +79,7 @@ impl<'a> Parser<'a> {
         Ok(classes)
     }
 
-    pub fn class(&mut self) -> ParserResult<Statement> {
+    pub fn class(&mut self) -> ParserResult<Class> {
         use Statement::*;
         use TokenType::*;
 
@@ -89,34 +91,32 @@ impl<'a> Parser<'a> {
         self.consume(Endline, "End of line")?;
         self.consume(Indent, "Indendation start")?;
 
-        let mut implementing_list = Vec::new();
+        let mut ancestors = Vec::new();
 
         if self.is_match(&[TokenType::Implementing]) {
-            implementing_list.push(self.consume_class_name()?);
+            ancestors.push(self.consume_class_name()?);
 
             while let Some(TokenType::Implementing) = self.peek().map(|t| t.kind) {
                 self.advance();
-                implementing_list.push(self.consume_class_name()?);
+                ancestors.push(self.consume_class_name()?);
             }
         }
 
         let mut states = vec![];
-        let mut methods = vec![];
 
         while let Some(declaration) = self.declaration()? {
             match declaration {
                 state @ ClassState { .. } => states.push(state),
-                Method(index) => {
-                    self.get_function(index).class = Some(name);
-                    methods.push(index)
-                }
                 _ => unreachable!(),
             };
         }
 
-        Ok(Statement::Class {
+        let mut methods = AHashMap::new();
+        swap(&mut self.current_methods, &mut methods);
+
+        Ok(Class {
             name,
-            implementing_list,
+            ancestors,
             states,
             methods,
             decorator,
@@ -150,7 +150,10 @@ impl<'a> Parser<'a> {
 
             let body = self.block(false, Some("Method"))?;
 
-            self.push_function(name, None, patterns, return_type, body, decorator);
+            let mut environment = AHashMap::new();
+            swap(&mut self.current_environment, &mut environment);
+
+            self.push_method(name, patterns, return_type, body, environment, decorator);
             Ok(Some(Method(name)))
         }
     }
@@ -233,8 +236,6 @@ impl<'a> Parser<'a> {
             ));
         }
 
-        self.consume(Semicolon, "Endline")?;
-
         self.skip_while(&[Semicolon]);
 
         let mut expressions = vec![];
@@ -284,7 +285,7 @@ impl<'a> Parser<'a> {
 
             let name = self.consume_name_from_token(token, "Function Name")?;
 
-            self.push_function(name, None, params, return_type, value, String::new());
+            self.push_function(name, params, return_type, value, String::new());
             Ok(Expression::Function(name))
         } else {
             Ok(expr)
@@ -569,7 +570,7 @@ impl<'a> Parser<'a> {
 
                 list.push(match self.eval_constexpr(&first_expr)? {
                     Some(Expression::Literal(index)) => {
-                        let literal = self.literals.remove(&index.0).unwrap();
+                        let literal = self.literals.remove(&index).unwrap();
                         Either::Right(literal)
                     }
                     Some(expr) => Either::Left(expr),
@@ -583,7 +584,7 @@ impl<'a> Parser<'a> {
 
                     list.push(match self.eval_constexpr(&expr)? {
                         Some(Expression::Literal(index)) => {
-                            let literal = self.literals.remove(&index.0).unwrap();
+                            let literal = self.literals.remove(&index).unwrap();
                             Either::Right(literal)
                         }
                         Some(expr) => Either::Left(expr),
@@ -699,9 +700,10 @@ impl<'a> Parser<'a> {
 
     fn push_name(&mut self, token: &Token) -> NameIndex {
         use TokenType::{Constant, Identifier, Wildcard};
-        let index = NameIndex(self.names.len());
 
         let string = self.lexemes[token.start..token.end].join("");
+
+        let index = NameIndex::new(&string);
 
         let name = match token.kind {
             Constant => Name::Public(string),
@@ -710,43 +712,65 @@ impl<'a> Parser<'a> {
             _ => unreachable!(),
         };
 
-        let next_index = *self.names.keys().max().unwrap_or(&0);
-
-        self.names.insert(next_index, name);
+        self.names.insert(index, name);
 
         index
     }
 
     fn push_literal(&mut self, literal: Literal) -> LiteralIndex {
-        let next_index = *self.literals.keys().max().unwrap_or(&0);
+        let next_index = *self.literals.keys().max().unwrap_or(&LiteralIndex(0));
 
         self.literals.insert(next_index, literal);
 
-        LiteralIndex(next_index)
+        next_index
+    }
+
+    fn push_method(
+        &mut self,
+        name: NameIndex,
+        params: Vec<Pattern>,
+        return_type: Option<Expression>,
+        body: Expression,
+        environment: AHashMap<NameIndex, Vec<Function>>,
+        decorator: String,
+    ) {
+        let function = Function {
+            name,
+            params,
+            return_type,
+            body,
+            environment: Some(environment),
+            decorator,
+        };
+        if let Some(functions) = self.current_methods.get_mut(&name) {
+            functions.push(function);
+        } else {
+            self.current_methods.insert(name, vec![function]);
+        }
     }
 
     fn push_function(
         &mut self,
         name: NameIndex,
-        class: Option<NameIndex>,
         params: Vec<Pattern>,
         return_type: Option<Expression>,
         body: Expression,
         decorator: String,
     ) {
-        self.functions.insert(
+        let function = Function {
             name,
-            Function {
-                name,
-                class,
-                params,
-                return_type,
-                body,
-                decorator,
-            },
-        );
+            params,
+            return_type,
+            body,
+            environment: None,
+            decorator,
+        };
+        if let Some(functions) = self.current_environment.get_mut(&name) {
+            functions.push(function);
+        } else {
+            self.current_methods.insert(name, vec![function]);
+        }
     }
-
     fn skip_while(&mut self, kinds: &[TokenType]) {
         while self.is_match(kinds) {
             self.advance();
@@ -787,8 +811,8 @@ impl<'a> Parser<'a> {
                     _ => unreachable!(),
                 })
                 .map(|literal| {
-                    self.literals.remove(&lhs_index.0);
-                    self.literals.remove(&rhs_index.0);
+                    self.literals.remove(&lhs_index);
+                    self.literals.remove(&rhs_index);
                     Literal(self.push_literal(literal))
                 })
             }
@@ -803,7 +827,7 @@ impl<'a> Parser<'a> {
                     _ => unreachable!(),
                 })
                 .map(|literal| {
-                    self.literals.remove(&expr_index.0);
+                    self.literals.remove(&expr_index);
                     Literal(self.push_literal(literal))
                 })
             }
@@ -818,8 +842,8 @@ impl<'a> Parser<'a> {
                 let search = self.get_literal(search_index);
 
                 container.get(search).map(|literal| {
-                    self.literals.remove(&container_index.0);
-                    self.literals.remove(&search_index.0);
+                    self.literals.remove(&container_index);
+                    self.literals.remove(&search_index);
                     match literal {
                         Either::Left(expr) => expr,
                         Either::Right(literal) => Literal(self.push_literal(literal)),
