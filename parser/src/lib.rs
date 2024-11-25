@@ -268,7 +268,7 @@ impl<'a> Parser<'a> {
     fn function(&mut self) -> ParserResult<Expression> {
         use TokenType::*;
 
-        let expr = self.match_expr()?;
+        let expr = self.lambda()?;
         let token = self.peek();
 
         if self.is_match(&[ParenOpen]) {
@@ -291,6 +291,23 @@ impl<'a> Parser<'a> {
             Ok(Expression::Function(name))
         } else {
             Ok(expr)
+        }
+    }
+
+    fn lambda(&mut self) -> ParserResult<Expression> {
+        use TokenType::Pipe;
+
+        if self.is_match(&[Pipe]) {
+            let params = self.pattern_list()?;
+            self.consume(Pipe, "| symbol")?;
+            let expr = self.expression()?;
+
+            Ok(Expression::Lambda {
+                expression: Box::new(expr),
+                params,
+            })
+        } else {
+            self.match_expr()
         }
     }
 

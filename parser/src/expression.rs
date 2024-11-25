@@ -38,4 +38,9 @@ pub enum Expression {
         value: Box<Expression>,
         params: Vec<Pattern>,
     },
+
+    Lambda {
+        expression: Box<Expression>,
+        params: Vec<Pattern>,
+    },
 }
