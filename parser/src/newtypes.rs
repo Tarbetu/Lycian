@@ -1,5 +1,4 @@
 use std::fmt::Display;
-use std::hash::{BuildHasher, Hasher, RandomState};
 
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Ord, Eq, Hash)]
 pub struct NameIndex(pub usize);
@@ -20,6 +19,14 @@ pub enum Name {
     /// Private names are defined with leading wildcard.
     /// i.e: _my_type
     Private(String),
+}
+
+impl AsRef<str> for Name {
+    fn as_ref(&self) -> &str {
+        match self {
+            Name::Public(name) | Name::Protected(name) | Name::Private(name) => name.as_ref(),
+        }
+    }
 }
 
 impl Display for Name {

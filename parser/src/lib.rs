@@ -175,7 +175,7 @@ impl<'a> Parser<'a> {
                 patterns.push(self.pattern()?);
             }
 
-            self.consume(ParenClose, "Right Paranthesis")?;
+            self.consume(ParenClose, "End of Paranthesis")?;
         }
 
         if patterns.len() >= 255 {
@@ -543,10 +543,9 @@ impl<'a> Parser<'a> {
 
         Ok(if self.is_match(&[ParenOpen]) {
             let expr = self.expression()?;
-            self.consume(ParenClose, "Right Paranthesis")?;
+            self.consume(ParenClose, "End of Paranthesis")?;
             Expression::Grouping(Box::new(expr))
         } else if self.is_match(&[ClassSelf]) {
-            self.advance();
             Expression::ClassSelf
         } else if self.is_match(&[Super]) {
             self.advance();
@@ -732,8 +731,10 @@ impl<'a> Parser<'a> {
 
         if let Some(index) = self.names.get_by_right(&name) {
             *index
+        } else if name.as_ref() == "main" {
+            NameIndex(0)
         } else {
-            let next_index = *self.names.left_values().max().unwrap_or(&NameIndex(0));
+            let next_index = *self.names.left_values().max().unwrap_or(&NameIndex(1));
 
             self.names.insert(next_index, name);
 
