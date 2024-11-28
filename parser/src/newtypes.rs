@@ -4,19 +4,10 @@ use std::hash::{BuildHasher, Hasher, RandomState};
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Ord, Eq, Hash)]
 pub struct NameIndex(pub usize);
 
-impl NameIndex {
-    pub fn new(seed: &str) -> Self {
-        let mut hasher = RandomState::new().build_hasher();
-        hasher.write(seed.as_bytes());
-
-        Self(hasher.finish() as usize)
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Ord, Eq, Hash)]
 pub struct LiteralIndex(pub usize);
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq, Hash)]
 pub enum Name {
     /// Public names are defined with constants.
     /// i.e: MyType

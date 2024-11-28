@@ -27,13 +27,14 @@ use operator::Operator;
 use scanner::{Token, TokenType};
 
 use ahash::AHashMap;
+use bimap::BiHashMap;
 use either::Either;
 
 pub struct Parser<'a> {
     lexemes: &'a [&'a str],
     tokens: &'a [Token],
     position: usize,
-    names: AHashMap<NameIndex, Name>,
+    names: BiHashMap<NameIndex, Name>,
     literals: AHashMap<LiteralIndex, Literal>,
     current_methods: AHashMap<NameIndex, Vec<Function>>,
     current_environment: AHashMap<NameIndex, Vec<Function>>,
@@ -45,7 +46,7 @@ impl<'a> Parser<'a> {
             lexemes,
             tokens,
             position: 0,
-            names: AHashMap::new(),
+            names: BiHashMap::new(),
             current_methods: AHashMap::new(),
             current_environment: AHashMap::new(),
             literals: AHashMap::new(),
@@ -53,7 +54,7 @@ impl<'a> Parser<'a> {
     }
 
     pub fn get_name(&mut self, index: NameIndex) -> &Name {
-        self.names.get(&index).expect("Invalid name index")
+        self.names.get_by_left(&index).expect("Invalid name index")
     }
 
     pub fn get_literal(&self, index: LiteralIndex) -> &Literal {
@@ -722,8 +723,6 @@ impl<'a> Parser<'a> {
 
         let string = self.lexemes[token.start..token.end].join("");
 
-        let index = NameIndex::new(&string);
-
         let name = match token.kind {
             Constant => Name::Public(string),
             Identifier => Name::Protected(string),
@@ -731,9 +730,15 @@ impl<'a> Parser<'a> {
             _ => unreachable!(),
         };
 
-        self.names.insert(index, name);
+        if let Some(index) = self.names.get_by_right(&name) {
+            *index
+        } else {
+            let next_index = *self.names.left_values().max().unwrap_or(&NameIndex(0));
 
-        index
+            self.names.insert(next_index, name);
+
+            next_index
+        }
     }
 
     fn push_literal(&mut self, literal: Literal) -> LiteralIndex {
@@ -872,5 +877,19 @@ impl<'a> Parser<'a> {
 
             _ => None,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use scanner::Scanner;
+
+    #[test]
+    fn test_simple_class() {
+        let source = "
+Program:
+    main = 42
+";
+        Scanner::new(source, false).scan();
     }
 }
