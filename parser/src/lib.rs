@@ -126,7 +126,7 @@ impl<'a> Parser<'a> {
 
     fn declaration(&mut self) -> ParserResult<Option<Statement>> {
         use Statement::{ClassState, Method};
-        use TokenType::{Arrow, Dedent, Equal, Semicolon};
+        use TokenType::{Arrow, Dedent, Endline, Equal};
 
         let decorator = self.consume_decorator()?;
 
@@ -134,7 +134,7 @@ impl<'a> Parser<'a> {
 
         let patterns = self.pattern_list()?;
 
-        if self.is_match(&[Semicolon]) {
+        if self.is_match(&[Endline]) {
             Ok(Some(ClassState { name, patterns }))
         } else if self.is_match(&[Dedent]) {
             Ok(None)
@@ -160,17 +160,17 @@ impl<'a> Parser<'a> {
     }
 
     fn pattern_list(&mut self) -> ParserResult<Vec<Pattern>> {
-        use TokenType::{Comma, ParenClose, ParenOpen, Semicolon};
+        use TokenType::{Comma, Endline, ParenClose, ParenOpen};
 
         let mut patterns = Vec::new();
 
         if self.is_match(&[ParenOpen]) {
-            self.skip_while(&[Semicolon]);
+            self.skip_while(&[Endline]);
 
             patterns.push(self.pattern()?);
 
-            while self.is_match(&[Comma, Semicolon]) {
-                self.skip_while(&[Semicolon]);
+            while self.is_match(&[Comma, Endline]) {
+                self.skip_while(&[Endline]);
 
                 patterns.push(self.pattern()?);
             }
@@ -220,7 +220,7 @@ impl<'a> Parser<'a> {
         params_expected: bool,
         context_info: Option<&'static str>,
     ) -> ParserResult<Expression> {
-        use TokenType::{Dedent, Pipe, Semicolon};
+        use TokenType::{Dedent, Endline, Pipe};
 
         let params = if self.is_match(&[Pipe]) {
             let result = self.pattern_list()?;
@@ -237,16 +237,16 @@ impl<'a> Parser<'a> {
             ));
         }
 
-        self.consume(Semicolon, "Endline")?;
+        self.consume(Endline, "Endline")?;
 
-        self.skip_while(&[Semicolon]);
+        self.skip_while(&[Endline]);
 
         let mut expressions = vec![];
 
         while !self.is_match(&[Dedent]) {
             expressions.push(self.expression()?);
 
-            self.consume(Semicolon, "Endline")?;
+            self.consume(Endline, "Endline")?;
         }
 
         let value = expressions.pop().unwrap();
@@ -313,11 +313,11 @@ impl<'a> Parser<'a> {
     }
 
     fn match_expr(&mut self) -> ParserResult<Expression> {
-        use TokenType::{Arrow, Dedent, Indent, Match, Semicolon};
+        use TokenType::{Arrow, Dedent, Endline, Indent, Match};
         if self.is_match(&[Match]) {
             let scrutinee = self.expression()?;
 
-            self.skip_while(&[Semicolon]);
+            self.skip_while(&[Endline]);
 
             self.consume(Indent, "Indendation start")?;
 
@@ -329,8 +329,8 @@ impl<'a> Parser<'a> {
 
                     self.consume(Arrow, "Arrow")?;
 
-                    let expr = if self.is_match(&[Semicolon]) {
-                        self.skip_while(&[Semicolon]);
+                    let expr = if self.is_match(&[Endline]) {
+                        self.skip_while(&[Endline]);
                         self.consume(Indent, "Endline")?;
                         self.block(true, None)?
                     } else {
@@ -485,11 +485,11 @@ impl<'a> Parser<'a> {
 
     fn call(&mut self) -> ParserResult<Expression> {
         use Expression::{Call, MethodCall};
-        use TokenType::{Colon, Dot, ParenClose, ParenOpen, Semicolon};
+        use TokenType::{Colon, Dot, Endline, ParenClose, ParenOpen};
         let mut expr = self.primary()?;
 
         loop {
-            self.skip_while(&[Semicolon]);
+            self.skip_while(&[Endline]);
             let callee_id = self.consume_name()?;
 
             if self.is_match(&[ParenOpen]) {
@@ -522,14 +522,14 @@ impl<'a> Parser<'a> {
     }
 
     fn arguments(&mut self) -> ParserResult<Vec<Expression>> {
-        use TokenType::{Comma, ParenClose, Semicolon};
+        use TokenType::{Comma, Endline, ParenClose};
 
-        self.skip_while(&[Semicolon]);
+        self.skip_while(&[Endline]);
 
         let mut arguments = vec![];
         arguments.push(self.expression()?);
 
-        while self.is_match(&[Comma, Semicolon]) {
+        while self.is_match(&[Comma, Endline]) {
             arguments.push(self.expression()?);
         }
 
@@ -597,7 +597,7 @@ impl<'a> Parser<'a> {
                 });
 
                 while self.is_match(&[Comma]) {
-                    self.skip_while(&[Semicolon]);
+                    self.skip_while(&[Endline]);
 
                     let expr = self.expression()?;
 
@@ -703,14 +703,14 @@ impl<'a> Parser<'a> {
     }
 
     fn consume_decorator(&mut self) -> ParserResult<String> {
-        use TokenType::{Decorator, Semicolon};
+        use TokenType::{Decorator, Endline};
 
         if self.is_match(&[Decorator]) {
             let token = self.peek().unwrap();
 
             let res = self.lexemes[token.start..token.end].join("");
             self.advance();
-            self.consume(Semicolon, "Endline")?;
+            self.consume(Endline, "Endline")?;
             Ok(res)
         } else {
             Ok(String::new())

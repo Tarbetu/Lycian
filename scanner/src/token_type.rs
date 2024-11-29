@@ -12,7 +12,6 @@ pub enum TokenType {
     Comma,
     Dot,
     Colon,
-    Semicolon,
     Range,
     RangeEqual,
 

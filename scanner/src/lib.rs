@@ -59,7 +59,6 @@ impl<'a> Scanner<'a> {
                 ']' => Some((current + 1, BracketClose)),
                 ',' => Some((current + 1, Comma)),
                 ':' => Some((current + 1, Colon)),
-                ';' => Some((current + 1, Semicolon)),
                 '+' => Some((current + 1, Plus)),
                 '*' => Some((current + 1, Star)),
                 '/' => Some((current + 1, Slash)),
@@ -164,7 +163,7 @@ impl<'a> Scanner<'a> {
     }
 
     fn push(&mut self, current: usize, kind: TokenType) {
-        use TokenType::{Dedent, Endline, Indent, InvalidIndentation, Semicolon, Space};
+        use TokenType::{Dedent, Endline, Indent, InvalidIndentation, Space};
         if !(kind == Endline) {
             if matches!(self.line_buffer.last(), Some(Space) | None) {
                 self.line_buffer.push(kind);
@@ -210,7 +209,7 @@ impl<'a> Scanner<'a> {
                 .push_back(Token::new(kind, self.start, current, self.line));
         } else {
             self.tokens
-                .push_back(Token::new(Semicolon, self.start, current, self.line))
+                .push_back(Token::new(Endline, self.start, current, self.line))
         }
     }
 
@@ -467,11 +466,6 @@ mod tests {
     #[test]
     fn tokenize_colon() {
         assert_for_single_token(":", Colon);
-    }
-
-    #[test]
-    fn tokenize_semicolon() {
-        assert_for_single_token(";", Semicolon);
     }
 
     #[test]
@@ -739,10 +733,9 @@ true
         assert_for_tokens(
             source,
             &[
-                Match, Constant, Colon, Semicolon, Indent, Integer, Arrow, Identifier, ParenOpen,
-                ParenClose, Semicolon, Integer, Arrow, Identifier, ParenOpen, ParenClose,
-                Semicolon, Integer, Arrow, Identifier, ParenOpen, ParenClose, Semicolon, Dedent,
-                True, Semicolon,
+                Match, Constant, Colon, Endline, Indent, Integer, Arrow, Identifier, ParenOpen,
+                ParenClose, Endline, Integer, Arrow, Identifier, ParenOpen, ParenClose, Endline,
+                Integer, Arrow, Identifier, ParenOpen, ParenClose, Endline, Dedent, True, Endline,
             ],
         )
     }
@@ -759,9 +752,9 @@ match cond:
         assert_for_tokens(
             source,
             &[
-                Match, Identifier, Colon, Semicolon, Indent, Integer, Arrow, Identifier, ParenOpen,
-                ParenClose, Semicolon, Integer, Arrow, Semicolon, Indent, Identifier, ParenOpen,
-                ParenClose, Semicolon, Dedent, Dedent,
+                Match, Identifier, Colon, Endline, Indent, Integer, Arrow, Identifier, ParenOpen,
+                ParenClose, Endline, Integer, Arrow, Endline, Indent, Identifier, ParenOpen,
+                ParenClose, Endline, Dedent, Dedent,
             ],
         )
     }
@@ -784,12 +777,12 @@ IO.puts(Constant().function)
         assert_for_tokens(
             source,
             &[
-                Constant, Colon, Semicolon, Indent, Identifier, Equal, Semicolon, Indent, Match,
-                Identifier, Colon, Semicolon, Indent, Integer, Arrow, Identifier, ParenOpen,
-                ParenClose, Semicolon, Integer, Arrow, Semicolon, Indent, Identifier, ParenOpen,
-                ParenClose, Semicolon, Dedent, Dedent, Dedent, Identifier, Equal, Str, Semicolon,
+                Constant, Colon, Endline, Indent, Identifier, Equal, Endline, Indent, Match,
+                Identifier, Colon, Endline, Indent, Integer, Arrow, Identifier, ParenOpen,
+                ParenClose, Endline, Integer, Arrow, Endline, Indent, Identifier, ParenOpen,
+                ParenClose, Endline, Dedent, Dedent, Dedent, Identifier, Equal, Str, Endline,
                 Dedent, Constant, Dot, Identifier, ParenOpen, Constant, ParenOpen, ParenClose, Dot,
-                Identifier, ParenClose, Semicolon,
+                Identifier, ParenClose, Endline,
             ],
         )
     }
