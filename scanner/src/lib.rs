@@ -2,20 +2,17 @@ mod token;
 mod token_type;
 use std::cmp::Ordering;
 
-use std::{
-    collections::VecDeque,
-    iter::{Enumerate, Peekable},
-    str::Chars,
-};
+use std::iter::{Enumerate, Peekable};
 
 pub use token::Token;
 pub use token_type::TokenType;
+use unicode_segmentation::{Graphemes, UnicodeSegmentation};
 
 pub struct Scanner<'a> {
-    chars: Peekable<Enumerate<Chars<'a>>>,
+    chars: Peekable<Enumerate<Graphemes<'a>>>,
     start: usize,
     line: usize,
-    tokens: VecDeque<Token>,
+    tokens: Vec<Token>,
     line_buffer: Vec<TokenType>,
     first_indentation: usize,
     current_indentation: usize,
@@ -26,11 +23,11 @@ pub struct Scanner<'a> {
 impl<'a> Scanner<'a> {
     pub fn new(source: &'a str, catch_comments: bool) -> Scanner {
         Scanner {
-            chars: source.chars().enumerate().peekable(),
-            tokens: VecDeque::new(),
+            chars: source.graphemes(true).enumerate().peekable(),
+            tokens: vec![],
             start: 0,
             line: 1,
-            line_buffer: Vec::new(),
+            line_buffer: Vec::with_capacity(16),
             first_indentation: 0,
             current_indentation: 0,
             max: source.len(),
@@ -38,7 +35,7 @@ impl<'a> Scanner<'a> {
         }
     }
 
-    pub fn scan(mut self) -> VecDeque<Token> {
+    pub fn scan(mut self) -> Vec<Token> {
         use TokenType::*;
 
         if self.is_at_end() {
@@ -51,31 +48,31 @@ impl<'a> Scanner<'a> {
             self.start = current;
 
             let kind = match char {
-                '(' => Some((current + 1, ParenOpen)),
-                ')' => Some((current + 1, ParenClose)),
-                '{' => Some((current + 1, BraceOpen)),
-                '}' => Some((current + 1, BraceClose)),
-                '[' => Some((current + 1, BracketOpen)),
-                ']' => Some((current + 1, BracketClose)),
-                ',' => Some((current + 1, Comma)),
-                ':' => Some((current + 1, Colon)),
-                '+' => Some((current + 1, Plus)),
-                '*' => Some((current + 1, Star)),
-                '/' => Some((current + 1, Slash)),
-                '%' => Some((current + 1, Percent)),
-                '|' => Some((current + 1, Pipe)),
-                '-' => {
-                    if let Some(&(_, '>')) = self.chars.peek() {
+                "(" => Some((current + 1, ParenOpen)),
+                ")" => Some((current + 1, ParenClose)),
+                "{" => Some((current + 1, BraceOpen)),
+                "}" => Some((current + 1, BraceClose)),
+                "[" => Some((current + 1, BracketOpen)),
+                "]" => Some((current + 1, BracketClose)),
+                "," => Some((current + 1, Comma)),
+                ":" => Some((current + 1, Colon)),
+                "+" => Some((current + 1, Plus)),
+                "*" => Some((current + 1, Star)),
+                "/" => Some((current + 1, Slash)),
+                "%" => Some((current + 1, Percent)),
+                "|" => Some((current + 1, Pipe)),
+                "-" => {
+                    if let Some(&(_, ">")) = self.chars.peek() {
                         self.chars.next();
                         Some((current + 2, Arrow))
                     } else {
                         Some((current + 1, Minus))
                     }
                 }
-                '.' => {
-                    if let Some(&(_, '.')) = self.chars.peek() {
+                "." => {
+                    if let Some(&(_, ".")) = self.chars.peek() {
                         self.chars.next();
-                        if let Some(&(_, '=')) = self.chars.peek() {
+                        if let Some(&(_, "=")) = self.chars.peek() {
                             self.chars.next();
                             Some((current + 3, RangeEqual))
                         } else {
@@ -85,44 +82,44 @@ impl<'a> Scanner<'a> {
                         Some((current + 1, Dot))
                     }
                 }
-                '!' => {
-                    if let Some(&(_, '=')) = self.chars.peek() {
+                "!" => {
+                    if let Some(&(_, "=")) = self.chars.peek() {
                         self.chars.next();
                         Some((current + 2, NotEqual))
                     } else {
                         Some((current + 1, Not))
                     }
                 }
-                '=' => {
-                    if let Some(&(_, '=')) = self.chars.peek() {
+                "=" => {
+                    if let Some(&(_, "=")) = self.chars.peek() {
                         self.chars.next();
                         Some((current + 2, EqualEqual))
                     } else {
                         Some((current + 1, Equal))
                     }
                 }
-                '<' => {
-                    if let Some(&(_, '=')) = self.chars.peek() {
+                "<" => {
+                    if let Some(&(_, "=")) = self.chars.peek() {
                         self.chars.next();
                         Some((current + 2, LessEqual))
                     } else {
                         Some((current + 1, Less))
                     }
                 }
-                '>' => {
-                    if let Some(&(_, '=')) = self.chars.peek() {
+                ">" => {
+                    if let Some(&(_, "=")) = self.chars.peek() {
                         self.chars.next();
                         Some((current + 2, GreaterEqual))
                     } else {
                         Some((current + 1, Greater))
                     }
                 }
-                '\'' => Some(self.char()),
-                '"' => Some(self.string()),
-                '_' => Some(self.wildcard()),
-                '@' => Some(self.catch_until_line_end(Decorator)),
-                '#' => {
-                    if let Some(&(_, '#')) = self.chars.peek() {
+                "'" => Some(self.char()),
+                "\"" => Some(self.string()),
+                "_" => Some(self.wildcard()),
+                "@" => Some(self.catch_until_line_end(Decorator)),
+                "#" => {
+                    if let Some(&(_, "#")) = self.chars.peek() {
                         self.chars.next();
                         let token = self.catch_until_line_end(Documentation);
 
@@ -141,13 +138,13 @@ impl<'a> Scanner<'a> {
                         }
                     }
                 }
-                digit if digit.is_ascii_digit() => Some(self.number()),
-                space if space.is_whitespace() => self
+                digit if digit.chars().all(|c| c.is_ascii_digit()) => Some(self.number()),
+                space if space.chars().all(|c| c.is_whitespace()) => self
                     .handle_whitespace(space)
                     .map(|kind| (current + 1, kind)),
-                char if char.is_ascii_lowercase() => Some(self.identifier(char)),
-                char if char.is_ascii_uppercase() => Some(self.constant()),
-                char => Some((current + 1, UnexpectedCharacter(char))),
+                char if char.chars().all(|c| c.is_ascii_lowercase()) => Some(self.identifier(char)),
+                char if char.chars().all(|c| c.is_ascii_uppercase()) => Some(self.constant()),
+                _ => Some((current + 1, UnexpectedCharacter)),
             };
 
             if let Some((current, kind)) = kind {
@@ -178,7 +175,7 @@ impl<'a> Scanner<'a> {
                             0..((self.current_indentation - indentation) / self.first_indentation)
                         {
                             self.tokens
-                                .push_back(Token::new(Dedent, self.start, current, self.line));
+                                .push(Token::new(Dedent, self.start, current, self.line));
                         }
 
                         if self.current_indentation == 0 {
@@ -190,7 +187,7 @@ impl<'a> Scanner<'a> {
                         if self.first_indentation == 0 {
                             self.first_indentation = indentation;
                         } else if self.current_indentation % self.first_indentation != 0 {
-                            self.tokens.push_back(Token::new(
+                            self.tokens.push(Token::new(
                                 InvalidIndentation,
                                 current,
                                 current,
@@ -199,25 +196,25 @@ impl<'a> Scanner<'a> {
                         }
 
                         self.tokens
-                            .push_back(Token::new(Indent, self.start, current, self.line));
+                            .push(Token::new(Indent, self.start, current, self.line));
                     }
                 }
                 self.current_indentation = indentation;
             }
 
             self.tokens
-                .push_back(Token::new(kind, self.start, current, self.line));
+                .push(Token::new(kind, self.start, current, self.line));
         } else {
             self.tokens
-                .push_back(Token::new(Endline, self.start, current, self.line))
+                .push(Token::new(Endline, self.start, current, self.line))
         }
     }
 
-    fn handle_whitespace(&mut self, current_char: char) -> Option<TokenType> {
+    fn handle_whitespace(&mut self, current_str: &str) -> Option<TokenType> {
         use TokenType::*;
 
-        match current_char {
-            '\n' => {
+        match current_str {
+            "\n" => {
                 self.line += 1;
                 let res = if !self.line_buffer.is_empty() {
                     Some(Endline)
@@ -227,13 +224,13 @@ impl<'a> Scanner<'a> {
                 self.line_buffer.clear();
                 res
             }
-            ' ' | '\t' => {
+            " " | "\t" => {
                 if matches!(self.line_buffer.last(), Some(TokenType::Space) | None) {
                     self.line_buffer.push(Space);
                 }
                 None
             }
-            _ if current_char.is_whitespace() => None,
+            _ if current_str.chars().all(|c| c.is_whitespace()) => None,
             _ => unreachable!(),
         }
     }
@@ -244,7 +241,7 @@ impl<'a> Scanner<'a> {
         let mut char_encountered = false;
         loop {
             match self.chars.peek() {
-                Some(&(current, '\'')) => {
+                Some(&(current, "\'")) => {
                     self.chars.next();
                     return if char_encountered {
                         (current + 1, CharLiteral)
@@ -268,11 +265,11 @@ impl<'a> Scanner<'a> {
         loop {
             if let Some(&(_, char)) = self.chars.peek() {
                 match char {
-                    '"' => {
+                    "\"" => {
                         let current = self.chars.next().map(|(i, _)| i).unwrap_or(self.max) + 1;
                         return (current, Str);
                     }
-                    '\n' => {
+                    "\n" => {
                         self.line += 1;
                         self.chars.next();
                     }
@@ -292,10 +289,10 @@ impl<'a> Scanner<'a> {
         let mut is_integer = true;
         loop {
             match self.chars.peek() {
-                Some(&(_, char)) if char.is_ascii_digit() => {
+                Some(&(_, char)) if char.chars().all(|c| c.is_ascii_digit()) => {
                     self.chars.next();
                 }
-                Some(&(_, '.')) => {
+                Some(&(_, ".")) => {
                     self.chars.next();
                     is_integer = false;
                 }
@@ -310,7 +307,9 @@ impl<'a> Scanner<'a> {
 
         loop {
             match self.chars.peek() {
-                Some(&(_, char)) if char.is_ascii_alphanumeric() || char == '_' => {
+                Some(&(_, char))
+                    if char.chars().all(|c| c.is_ascii_alphanumeric()) || char == "_" =>
+                {
                     self.chars.next();
                 }
                 Some(&(index, _)) => return (index, Wildcard),
@@ -319,16 +318,18 @@ impl<'a> Scanner<'a> {
         }
     }
 
-    fn identifier(&mut self, first_char: char) -> (usize, TokenType) {
+    fn identifier(&mut self, first_char: &str) -> (usize, TokenType) {
         use TokenType::*;
 
         let mut buffer = String::from(first_char);
         let mut current = self.max;
         loop {
             match self.chars.peek() {
-                Some(&(_, char)) if char.is_ascii_alphanumeric() || char == '_' => {
+                Some(&(_, char))
+                    if char.chars().all(|c| c.is_ascii_alphanumeric()) || char == "_" =>
+                {
                     self.chars.next();
-                    buffer.push(char);
+                    buffer.push_str(char);
                 }
                 Some(&(index, _)) => {
                     current = index;
@@ -362,7 +363,7 @@ impl<'a> Scanner<'a> {
 
         loop {
             match self.chars.peek() {
-                Some(&(_, char)) if char.is_ascii_alphanumeric() => {
+                Some(&(_, char)) if char.chars().all(|c| c.is_ascii_alphanumeric()) => {
                     self.chars.next();
                 }
                 Some(&(index, _)) => return (index, Constant),
@@ -374,7 +375,7 @@ impl<'a> Scanner<'a> {
     fn catch_until_line_end(&mut self, kind: TokenType) -> (usize, TokenType) {
         loop {
             match self.chars.peek() {
-                Some((index, '\n')) => {
+                Some((index, "\n")) => {
                     return (index + 1, kind);
                 }
                 None => return (self.max, kind),

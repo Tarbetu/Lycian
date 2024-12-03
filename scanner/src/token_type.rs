@@ -69,7 +69,7 @@ pub enum TokenType {
     Eof,
 
     //Errors
-    UnexpectedCharacter(char),
+    UnexpectedCharacter,
     UnterminatedChar,
     EmptyChar,
     UnterminatedString,
