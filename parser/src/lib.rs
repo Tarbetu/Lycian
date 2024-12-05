@@ -617,7 +617,9 @@ impl<'a> Parser<'a> {
             });
         };
 
-        Ok(self.push_literal(res))
+        let literal_index = self.next_literal_index();
+        self.push_literal(literal_index, res);
+        Ok(literal_index)
     }
 
     fn peek(&self) -> Option<Token> {
@@ -734,7 +736,12 @@ impl<'a> Parser<'a> {
         } else if name.as_ref() == "main" {
             NameIndex(0)
         } else {
-            let next_index = *self.names.left_values().max().unwrap_or(&NameIndex(1));
+            let next_index = self
+                .names
+                .left_values()
+                .max()
+                .map(|index| NameIndex(index.0 + 1))
+                .unwrap_or(NameIndex(1));
 
             self.names.insert(next_index, name);
 
@@ -742,12 +749,16 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn push_literal(&mut self, literal: Literal) -> LiteralIndex {
-        let next_index = *self.literals.keys().max().unwrap_or(&LiteralIndex(0));
+    fn push_literal(&mut self, index: LiteralIndex, literal: Literal) {
+        self.literals.insert(index, literal);
+    }
 
-        self.literals.insert(next_index, literal);
-
-        next_index
+    fn next_literal_index(&self) -> LiteralIndex {
+        self.literals
+            .keys()
+            .max()
+            .map(|index| LiteralIndex(index.0 + 1))
+            .unwrap_or(LiteralIndex(0))
     }
 
     fn push_method(
@@ -807,6 +818,7 @@ impl<'a> Parser<'a> {
         use operator::*;
         use Expression::*;
 
+        let next_literal_index = self.next_literal_index();
         Ok(match expr {
             Literal(index) => Some(Expression::Literal(*index)),
             Grouping(expr) => self.eval_constexpr(expr)?,
@@ -839,7 +851,8 @@ impl<'a> Parser<'a> {
                 .map(|literal| {
                     self.literals.remove(&lhs_index);
                     self.literals.remove(&rhs_index);
-                    Literal(self.push_literal(literal))
+                    self.push_literal(next_literal_index, literal);
+                    Literal(next_literal_index)
                 })
             }
             Unary(op, expression) => {
@@ -854,7 +867,8 @@ impl<'a> Parser<'a> {
                 })
                 .map(|literal| {
                     self.literals.remove(&expr_index);
-                    Literal(self.push_literal(literal))
+                    self.push_literal(next_literal_index, literal);
+                    Literal(next_literal_index)
                 })
             }
             IndexOperator(container, search) => {
@@ -872,7 +886,10 @@ impl<'a> Parser<'a> {
                     self.literals.remove(&search_index);
                     match literal {
                         Either::Left(expr) => expr,
-                        Either::Right(literal) => Literal(self.push_literal(literal)),
+                        Either::Right(literal) => {
+                            self.push_literal(next_literal_index, literal);
+                            Literal(next_literal_index)
+                        }
                     }
                 })
             }
@@ -899,7 +916,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_simple_literal() {
+    fn parse_simple_class() {
         let source = "
 Program:
     main = 42
@@ -926,6 +943,38 @@ Program:
         assert_eq!(main_method.return_type, None);
         assert_eq!(main_method.environment.as_ref().map(|e| e.len()), Some(0));
         assert_eq!(main_method.body, Expression::Literal(LiteralIndex(0)));
+        assert!(main_method.decorator.is_empty());
+    }
+
+    #[test]
+    fn parse_simple_class_with_constexpr() {
+        let source = "
+Program:
+    main = 420 + 69
+";
+
+        let result = parse(source);
+        dbg!(&result.names);
+        assert_eq!(
+            result.get_name(NameIndex(1)),
+            &Name::Public("Program".to_string())
+        );
+        assert_eq!(
+            result.get_literal(LiteralIndex(2)),
+            &Literal::Integer(rug::Float::with_val(literal::PRECISION, 420 + 69))
+        );
+        let main_method = result
+            .classes
+            .get(&NameIndex(1))
+            .unwrap()
+            .methods
+            .get(&NameIndex(0))
+            .map(|methods| methods.first().unwrap())
+            .unwrap();
+        assert_eq!(main_method.params, vec![]);
+        assert_eq!(main_method.return_type, None);
+        assert_eq!(main_method.environment.as_ref().map(|e| e.len()), Some(0));
+        assert_eq!(main_method.body, Expression::Literal(LiteralIndex(2)));
         assert!(main_method.decorator.is_empty());
     }
 }
