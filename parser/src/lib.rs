@@ -913,6 +913,19 @@ Program:
         assert_eq!(
             result.get_literal(LiteralIndex(0)),
             &Literal::Integer(rug::Float::with_val(literal::PRECISION, 42))
-        )
+        );
+        let main_method = result
+            .classes
+            .get(&NameIndex(1))
+            .unwrap()
+            .methods
+            .get(&NameIndex(0))
+            .map(|methods| methods.first().unwrap())
+            .unwrap();
+        assert_eq!(main_method.params, vec![]);
+        assert_eq!(main_method.return_type, None);
+        assert_eq!(main_method.environment.as_ref().map(|e| e.len()), Some(0));
+        assert_eq!(main_method.body, Expression::Literal(LiteralIndex(0)));
+        assert!(main_method.decorator.is_empty());
     }
 }
