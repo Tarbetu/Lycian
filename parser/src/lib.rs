@@ -105,11 +105,14 @@ impl<'a> Parser<'a> {
 
         let mut states = vec![];
 
-        while let Some(declaration) = self.declaration()? {
-            match declaration {
-                state @ ClassState { .. } => states.push(state),
-                _ => unreachable!(),
-            };
+        while self.peek().is_some() {
+            if let Some(declaration) = self.declaration()? {
+                match declaration {
+                    state @ ClassState { .. } => states.push(state),
+                    Method(_) => {}
+                    _ => unreachable!(),
+                };
+            }
         }
 
         let mut methods = AHashMap::new();
@@ -480,10 +483,11 @@ impl<'a> Parser<'a> {
         let mut expr = self.primary()?;
 
         loop {
-            self.skip_while(&[Endline]);
-            let callee_id = self.consume_name()?;
+            let callee_token = self.peek();
 
             if self.is_match(&[ParenOpen]) {
+                self.skip_while(&[Endline]);
+
                 let args = if self.is_match(&[ParenClose]) {
                     vec![]
                 } else {
@@ -496,7 +500,7 @@ impl<'a> Parser<'a> {
                 };
                 expr = Call {
                     callee: Box::new(expr),
-                    function_id: callee_id,
+                    function_id: self.consume_name_from_token(callee_token, "Callee")?,
                     args,
                     block,
                 };
@@ -553,8 +557,7 @@ impl<'a> Parser<'a> {
         } else if self.is_match(&[False]) {
             Literal::Boolean(false)
         } else if self.is_match(&[Integer, Float]) {
-            let token = self.peek().unwrap();
-            dbg!(token);
+            let token = self.previous();
             debug_assert!(token.kind == TokenType::Integer || token.kind == TokenType::Float);
             let incomplete =
                 rug::Float::parse(self.lexemes[token.start..token.end].join("")).unwrap();
@@ -618,15 +621,19 @@ impl<'a> Parser<'a> {
     }
 
     fn peek(&self) -> Option<Token> {
-        match self.tokens.get(self.position) {
+        self.look_at(self.position)
+    }
+
+    fn previous(&self) -> Token {
+        self.look_at(self.position - 1).unwrap()
+    }
+
+    fn look_at(&self, position: usize) -> Option<Token> {
+        match self.tokens.get(position) {
             Some(token) if token.kind == TokenType::Eof => None,
             Some(token) => Some(*token),
             None => None,
         }
-    }
-
-    fn previous(&self) -> Token {
-        *self.tokens.get(self.position).unwrap()
     }
 
     fn advance(&mut self) -> Token {
@@ -903,5 +910,9 @@ Program:
             result.get_name(NameIndex(1)),
             &Name::Public("Program".to_string())
         );
+        assert_eq!(
+            result.get_literal(LiteralIndex(0)),
+            &Literal::Integer(rug::Float::with_val(literal::PRECISION, 42))
+        )
     }
 }
