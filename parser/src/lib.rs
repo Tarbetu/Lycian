@@ -899,7 +899,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_simple_method() {
+    fn parse_simple_literal() {
         let source = "
 Program:
     main = 42
