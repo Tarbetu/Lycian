@@ -905,14 +905,21 @@ mod tests {
     use scanner::Scanner;
     use unicode_segmentation::UnicodeSegmentation;
 
-    fn parse(source: &str) -> Parser {
-        let tokens = Scanner::new(source, false).scan();
-
+    fn initialize_parser(source: &str) -> Parser {
         let graphemes = source.graphemes(true).collect::<Vec<&str>>();
-        let mut parser = Parser::new(graphemes, tokens);
+        let tokens = Scanner::new(source, false).scan();
+        Parser::new(graphemes, tokens)
+    }
+
+    fn parse(source: &str) -> Parser {
+        let mut parser = initialize_parser(source);
         parser.parse().unwrap();
 
         parser
+    }
+
+    fn create_number(number: f64) -> rug::Float {
+        rug::Float::with_val(literal::PRECISION, number)
     }
 
     #[test]
@@ -929,7 +936,7 @@ Program:
         );
         assert_eq!(
             result.get_literal(LiteralIndex(0)),
-            &Literal::Integer(rug::Float::with_val(literal::PRECISION, 42))
+            &Literal::Integer(create_number(42.0))
         );
         let main_method = result
             .classes
@@ -961,7 +968,7 @@ Program:
         );
         assert_eq!(
             result.get_literal(LiteralIndex(2)),
-            &Literal::Integer(rug::Float::with_val(literal::PRECISION, 420 + 69))
+            &Literal::Integer(create_number(420.0 + 69.0))
         );
         let main_method = result
             .classes
@@ -976,5 +983,141 @@ Program:
         assert_eq!(main_method.environment.as_ref().map(|e| e.len()), Some(0));
         assert_eq!(main_method.body, Expression::Literal(LiteralIndex(2)));
         assert!(main_method.decorator.is_empty());
+    }
+
+    #[test]
+    fn parse_add() {
+        let mut parser = initialize_parser("420 + 69");
+        let result = parser.term().unwrap();
+
+        assert_eq!(
+            parser.get_literal(LiteralIndex(0)),
+            &Literal::Integer(create_number(420.0))
+        );
+        assert_eq!(
+            parser.get_literal(LiteralIndex(1)),
+            &Literal::Integer(create_number(69.0))
+        );
+
+        assert_eq!(
+            result,
+            Expression::Binary(
+                Box::new(Expression::Literal(LiteralIndex(0))),
+                Operator::Add,
+                Box::new(Expression::Literal(LiteralIndex(1)))
+            )
+        );
+
+        assert_eq!(
+            parser.eval_constexpr(&result).unwrap(),
+            Some(Expression::Literal(LiteralIndex(2)))
+        );
+
+        assert_eq!(
+            parser.get_literal(LiteralIndex(2)),
+            &Literal::Integer(create_number(420.0 + 69.0))
+        );
+    }
+
+    #[test]
+    fn parse_minus() {
+        let mut parser = initialize_parser("420 - 69");
+        let result = parser.term().unwrap();
+
+        assert_eq!(
+            parser.get_literal(LiteralIndex(0)),
+            &Literal::Integer(create_number(420.0))
+        );
+        assert_eq!(
+            parser.get_literal(LiteralIndex(1)),
+            &Literal::Integer(create_number(69.0))
+        );
+
+        assert_eq!(
+            result,
+            Expression::Binary(
+                Box::new(Expression::Literal(LiteralIndex(0))),
+                Operator::Substract,
+                Box::new(Expression::Literal(LiteralIndex(1)))
+            )
+        );
+
+        assert_eq!(
+            parser.eval_constexpr(&result).unwrap(),
+            Some(Expression::Literal(LiteralIndex(2)))
+        );
+
+        assert_eq!(
+            parser.get_literal(LiteralIndex(2)),
+            &Literal::Integer(create_number(420.0 - 69.0))
+        );
+    }
+
+    #[test]
+    fn parse_multiply() {
+        let mut parser = initialize_parser("420 * 69");
+        let result = parser.term().unwrap();
+
+        assert_eq!(
+            parser.get_literal(LiteralIndex(0)),
+            &Literal::Integer(create_number(420.0))
+        );
+        assert_eq!(
+            parser.get_literal(LiteralIndex(1)),
+            &Literal::Integer(create_number(69.0))
+        );
+
+        assert_eq!(
+            result,
+            Expression::Binary(
+                Box::new(Expression::Literal(LiteralIndex(0))),
+                Operator::Multiply,
+                Box::new(Expression::Literal(LiteralIndex(1)))
+            )
+        );
+
+        assert_eq!(
+            parser.eval_constexpr(&result).unwrap(),
+            Some(Expression::Literal(LiteralIndex(2)))
+        );
+
+        assert_eq!(
+            parser.get_literal(LiteralIndex(2)),
+            &Literal::Integer(create_number(420.0 * 69.0))
+        );
+    }
+
+    #[test]
+    fn parse_divide() {
+        let mut parser = initialize_parser("420 / 69");
+        let result = parser.term().unwrap();
+
+        assert_eq!(
+            parser.get_literal(LiteralIndex(0)),
+            &Literal::Integer(create_number(420.0))
+        );
+        assert_eq!(
+            parser.get_literal(LiteralIndex(1)),
+            &Literal::Integer(create_number(69.0))
+        );
+
+        assert_eq!(
+            result,
+            Expression::Binary(
+                Box::new(Expression::Literal(LiteralIndex(0))),
+                Operator::Divide,
+                Box::new(Expression::Literal(LiteralIndex(1)))
+            )
+        );
+
+        assert_eq!(
+            parser.eval_constexpr(&result).unwrap(),
+            Some(Expression::Literal(LiteralIndex(2)))
+        );
+
+        assert_eq!(
+            parser.get_literal(LiteralIndex(2)),
+            &Literal::Float(create_number(420.0 / 69.0))
+        );
     }
 }
