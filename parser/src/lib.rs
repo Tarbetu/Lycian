@@ -31,29 +31,31 @@ use bimap::BiHashMap;
 use either::Either;
 
 pub struct Parser<'a> {
-    lexemes: &'a [&'a str],
-    tokens: &'a [Token],
+    pub names: BiHashMap<NameIndex, Name>,
+    pub literals: AHashMap<LiteralIndex, Literal>,
+    pub classes: AHashMap<NameIndex, Class>,
+    lexemes: Vec<&'a str>,
+    tokens: Vec<Token>,
     position: usize,
-    names: BiHashMap<NameIndex, Name>,
-    literals: AHashMap<LiteralIndex, Literal>,
     current_methods: AHashMap<NameIndex, Vec<Function>>,
     current_environment: AHashMap<NameIndex, Vec<Function>>,
 }
 
 impl<'a> Parser<'a> {
-    pub fn new(lexemes: &'a [&'a str], tokens: &'a [Token]) -> Parser<'a> {
+    pub fn new(lexemes: Vec<&'a str>, tokens: Vec<Token>) -> Parser<'a> {
         Parser {
             lexemes,
             tokens,
             position: 0,
             names: BiHashMap::new(),
+            classes: AHashMap::new(),
             current_methods: AHashMap::new(),
             current_environment: AHashMap::new(),
             literals: AHashMap::new(),
         }
     }
 
-    pub fn get_name(&mut self, index: NameIndex) -> &Name {
+    pub fn get_name(&self, index: NameIndex) -> &Name {
         self.names.get_by_left(&index).expect("Invalid name index")
     }
 
@@ -61,15 +63,13 @@ impl<'a> Parser<'a> {
         self.literals.get(&index).expect("Invalid literal index")
     }
 
-    pub fn parse(&mut self) -> ParserResult<AHashMap<NameIndex, Class>> {
-        let mut classes = AHashMap::new();
-
+    pub fn parse(&mut self) -> ParserResult<()> {
         while self.peek().is_some() {
             let program = self.class();
 
             match program {
                 Ok(class) => {
-                    classes.insert(class.name, class);
+                    self.classes.insert(class.name, class);
                 }
                 Err(e) => {
                     return Err(e);
@@ -77,7 +77,7 @@ impl<'a> Parser<'a> {
             }
         }
 
-        Ok(classes)
+        Ok(())
     }
 
     pub fn class(&mut self) -> ParserResult<Class> {
@@ -140,8 +140,6 @@ impl<'a> Parser<'a> {
             Ok(None)
         } else {
             let return_type = if self.is_match(&[Arrow]) {
-                self.advance();
-
                 Some(self.expression()?)
             } else {
                 None
@@ -230,14 +228,12 @@ impl<'a> Parser<'a> {
             vec![]
         };
 
-        if !(params.is_empty() && params_expected) {
+        if params.is_empty() && params_expected {
             return Err(ParserError::UnexpectedBlockParams(
                 self.previous().line,
                 context_info.unwrap(),
             ));
         }
-
-        self.consume(Endline, "Endline")?;
 
         self.skip_while(&[Endline]);
 
@@ -276,7 +272,6 @@ impl<'a> Parser<'a> {
             let params = self.pattern_list()?;
 
             let return_type = if self.is_match(&[Arrow]) {
-                self.advance();
                 Some(self.expression()?)
             } else {
                 None
@@ -358,8 +353,6 @@ impl<'a> Parser<'a> {
         let mut left = self.and()?;
 
         while self.is_match(&[Or]) {
-            self.advance();
-
             let right = self.and()?;
 
             left = Expression::Binary(Box::new(left), Operator::Or, Box::new(right));
@@ -374,8 +367,6 @@ impl<'a> Parser<'a> {
         let mut left = self.equality()?;
 
         while self.is_match(&[And]) {
-            self.advance();
-
             let right = self.equality()?;
 
             left = Expression::Binary(Box::new(left), Operator::And, Box::new(right));
@@ -548,7 +539,6 @@ impl<'a> Parser<'a> {
         } else if self.is_match(&[ClassSelf]) {
             Expression::ClassSelf
         } else if self.is_match(&[Super]) {
-            self.advance();
             Expression::Super
         } else {
             Expression::Literal(self.catch_literal()?)
@@ -564,6 +554,8 @@ impl<'a> Parser<'a> {
             Literal::Boolean(false)
         } else if self.is_match(&[Integer, Float]) {
             let token = self.peek().unwrap();
+            dbg!(token);
+            debug_assert!(token.kind == TokenType::Integer || token.kind == TokenType::Float);
             let incomplete =
                 rug::Float::parse(self.lexemes[token.start..token.end].join("")).unwrap();
             let number = rug::Float::with_val(literal::PRECISION, incomplete);
@@ -571,10 +563,11 @@ impl<'a> Parser<'a> {
             match token.kind {
                 Float => Literal::Float(number),
                 Integer => Literal::Integer(number),
-                _ => unimplemented!(),
+                _ => unreachable!(),
             }
         } else if self.is_match(&[Str]) {
             let token = self.peek().unwrap();
+            debug_assert!(token.kind == TokenType::Str);
             let string = self.lexemes[token.start..token.end].join("");
             Literal::Str(string)
         } else if self.is_match(&[BraceOpen]) {
@@ -796,6 +789,7 @@ impl<'a> Parser<'a> {
             self.current_methods.insert(name, vec![function]);
         }
     }
+
     fn skip_while(&mut self, kinds: &[TokenType]) {
         while self.is_match(kinds) {
             self.advance();
@@ -883,14 +877,31 @@ impl<'a> Parser<'a> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use scanner::Scanner;
+    use unicode_segmentation::UnicodeSegmentation;
+
+    fn parse(source: &str) -> Parser {
+        let tokens = Scanner::new(source, false).scan();
+
+        let graphemes = source.graphemes(true).collect::<Vec<&str>>();
+        let mut parser = Parser::new(graphemes, tokens);
+        parser.parse().unwrap();
+
+        parser
+    }
 
     #[test]
-    fn test_simple_class() {
+    fn parse_simple_method() {
         let source = "
 Program:
     main = 42
 ";
-        Scanner::new(source, false).scan();
+
+        let result = parse(source);
+        assert_eq!(
+            result.get_name(NameIndex(1)),
+            &Name::Public("Program".to_string())
+        );
     }
 }
