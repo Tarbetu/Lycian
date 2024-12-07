@@ -2,7 +2,7 @@ use ahash::AHashMap;
 pub use rug::Float as RugFloat;
 use std::ops::*;
 
-pub const PRECISION: u32 = 64;
+pub const PRECISION: u32 = 52;
 
 use crate::Expression;
 use either::Either;

@@ -441,14 +441,15 @@ impl<'a> Parser<'a> {
     }
 
     fn factor(&mut self) -> ParserResult<Expression> {
-        use TokenType::{Slash, Star};
+        use TokenType::{Percent, Slash, Star};
 
         let mut left = self.unary()?;
 
-        while self.is_match(&[Star, Slash]) {
+        while self.is_match(&[Star, Slash, Percent]) {
             let operator = match self.previous().kind {
                 Star => Operator::Multiply,
                 Slash => Operator::Divide,
+                Percent => Operator::Modulo,
                 _ => unreachable!(),
             };
 
@@ -1118,6 +1119,68 @@ Program:
         assert_eq!(
             parser.get_literal(LiteralIndex(2)),
             &Literal::Float(create_number(420.0 / 69.0))
+        );
+    }
+
+    #[test]
+    fn parse_modulo() {
+        let mut parser = initialize_parser("420 % 69");
+        let result = parser.term().unwrap();
+
+        assert_eq!(
+            parser.get_literal(LiteralIndex(0)),
+            &Literal::Integer(create_number(420.0))
+        );
+        assert_eq!(
+            parser.get_literal(LiteralIndex(1)),
+            &Literal::Integer(create_number(69.0))
+        );
+
+        assert_eq!(
+            result,
+            Expression::Binary(
+                Box::new(Expression::Literal(LiteralIndex(0))),
+                Operator::Modulo,
+                Box::new(Expression::Literal(LiteralIndex(1)))
+            )
+        );
+
+        assert_eq!(
+            parser.eval_constexpr(&result).unwrap(),
+            Some(Expression::Literal(LiteralIndex(2)))
+        );
+
+        assert_eq!(
+            parser.get_literal(LiteralIndex(2)),
+            &Literal::Integer(create_number(420.0 % 69.0))
+        );
+    }
+
+    #[test]
+    fn parse_negate() {
+        let mut parser = initialize_parser("-31");
+        let result = parser.unary().unwrap();
+
+        assert_eq!(
+            parser.get_literal(LiteralIndex(0)),
+            &Literal::Integer(create_number(31.0))
+        );
+
+        assert_eq!(
+            result,
+            Expression::Unary(
+                Operator::Negate,
+                Box::new(Expression::Literal(LiteralIndex(0))),
+            )
+        );
+        assert_eq!(
+            parser.eval_constexpr(&result).unwrap(),
+            Some(Expression::Literal(LiteralIndex(1)))
+        );
+
+        assert_eq!(
+            parser.get_literal(LiteralIndex(1)),
+            &Literal::Integer(create_number(-31.0))
         );
     }
 }
