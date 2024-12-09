@@ -1183,4 +1183,47 @@ Program:
             &Literal::Integer(create_number(-31.0))
         );
     }
+
+    #[test]
+    fn parse_grouping() {
+        let mut parser = initialize_parser("(420 + 69) * 2");
+        let result = parser.factor().unwrap();
+
+        assert_eq!(
+            parser.get_literal(LiteralIndex(0)),
+            &Literal::Integer(create_number(420.0))
+        );
+
+        assert_eq!(
+            parser.get_literal(LiteralIndex(1)),
+            &Literal::Integer(create_number(69.0))
+        );
+
+        assert_eq!(
+            parser.get_literal(LiteralIndex(2)),
+            &Literal::Integer(create_number(2.0))
+        );
+
+        assert_eq!(
+            result,
+            Expression::Binary(
+                Box::new(Expression::Grouping(Box::new(Expression::Binary(
+                    Box::new(Expression::Literal(LiteralIndex(0))),
+                    Operator::Add,
+                    Box::new(Expression::Literal(LiteralIndex(1)))
+                )))),
+                Operator::Multiply,
+                Box::new(Expression::Literal(LiteralIndex(2))),
+            )
+        );
+        assert_eq!(
+            parser.eval_constexpr(&result).unwrap(),
+            Some(Expression::Literal(LiteralIndex(3)))
+        );
+
+        assert_eq!(
+            parser.get_literal(LiteralIndex(3)),
+            &Literal::Integer(create_number((420.0 + 69.0) * 2.0))
+        );
+    }
 }
