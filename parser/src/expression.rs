@@ -25,7 +25,7 @@ pub enum Expression {
         block: Option<Box<Expression>>,
     },
 
-    Callee(NameIndex),
+    CallRoot(NameIndex),
 
     MethodCall {
         inner_call: Box<Expression>,

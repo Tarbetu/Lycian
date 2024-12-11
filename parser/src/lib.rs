@@ -480,7 +480,7 @@ impl<'a> Parser<'a> {
     }
 
     fn call(&mut self) -> ParserResult<Expression> {
-        use Expression::{Call, Callee, MethodCall};
+        use Expression::{Call, CallRoot, MethodCall};
         use TokenType::{Colon, Dot, ParenClose, ParenOpen};
         let mut expr = self.primary()?;
 
@@ -492,9 +492,9 @@ impl<'a> Parser<'a> {
                     self.arguments()?
                 };
 
-                let Callee(function_id) = expr else {
+                let CallRoot(function_id) = expr else {
                     return Err(ParserError::UnexpectedToken {
-                        expected: "Callee",
+                        expected: "CallRoot",
                         found: self.peek().unwrap().kind,
                         line: self.peek().map(|t| t.line),
                     });
@@ -506,7 +506,7 @@ impl<'a> Parser<'a> {
                     args,
                     block: None,
                 };
-            } else if let Callee(function_id) = expr {
+            } else if let CallRoot(function_id) = expr {
                 expr = Call {
                     callee: Box::new(expr),
                     function_id,
@@ -514,7 +514,7 @@ impl<'a> Parser<'a> {
                     block: None,
                 }
             } else if self.is_match(&[Dot]) {
-                if let Callee(function_id) = self.primary()? {
+                if let CallRoot(function_id) = self.primary()? {
                     expr = Call {
                         callee: Box::new(MethodCall {
                             inner_call: Box::new(expr),
@@ -545,9 +545,9 @@ impl<'a> Parser<'a> {
                             block,
                         }
                     }
-                    MethodCall { .. } | Callee(_) => {
+                    MethodCall { .. } | CallRoot(_) => {
                         unreachable!(
-                            "MethodCall and Callee should be handled in previous iterations!\nCurrent expr: {:#?}", expr
+                            "MethodCall and CallRoot should be handled in previous iterations!\nCurrent expr: {:#?}", expr
                         );
                     }
                     _ => (),
@@ -587,7 +587,7 @@ impl<'a> Parser<'a> {
         } else if self.is_match(&[Super]) {
             Expression::Super
         } else if self.is_match(&[Constant, Identifier, Wildcard]) {
-            Expression::Callee(self.consume_name_from_token(Some(self.previous()), "Callee")?)
+            Expression::CallRoot(self.consume_name_from_token(Some(self.previous()), "CallRoot")?)
         } else {
             Expression::Literal(self.catch_literal()?)
         })
@@ -1278,7 +1278,7 @@ Program:
         assert_eq!(
             result,
             Expression::Call {
-                callee: Box::new(Expression::Callee(NameIndex(1))),
+                callee: Box::new(Expression::CallRoot(NameIndex(1))),
                 function_id: NameIndex(1),
                 args: vec![],
                 block: None,
@@ -1288,7 +1288,7 @@ Program:
 
     #[test]
     fn parse_method_call() {
-        use Expression::{Call, Callee, MethodCall};
+        use Expression::{Call, CallRoot, MethodCall};
         let mut parser = initialize_parser("function.method");
         let result = parser.call().unwrap();
 
@@ -1297,7 +1297,7 @@ Program:
             Call {
                 callee: Box::new(MethodCall {
                     inner_call: Box::new(Call {
-                        callee: Box::new(Callee(NameIndex(1))),
+                        callee: Box::new(CallRoot(NameIndex(1))),
                         function_id: NameIndex(1),
                         args: vec![],
                         block: None
@@ -1312,7 +1312,7 @@ Program:
 
     #[test]
     fn parse_method_call_with_empty_paranthesis() {
-        use Expression::{Call, Callee, MethodCall};
+        use Expression::{Call, CallRoot, MethodCall};
         let mut parser = initialize_parser("function().method()");
         let result = parser.call().unwrap();
 
@@ -1321,7 +1321,7 @@ Program:
             Call {
                 callee: Box::new(MethodCall {
                     inner_call: Box::new(Call {
-                        callee: Box::new(Callee(NameIndex(1))),
+                        callee: Box::new(CallRoot(NameIndex(1))),
                         function_id: NameIndex(1),
                         args: vec![],
                         block: None
@@ -1336,7 +1336,7 @@ Program:
 
     #[test]
     fn parse_method_call_with_same_name_with_method() {
-        use Expression::{Call, Callee, MethodCall};
+        use Expression::{Call, CallRoot, MethodCall};
         let mut parser = initialize_parser("call.call");
         let result = parser.call().unwrap();
 
@@ -1345,7 +1345,7 @@ Program:
             Call {
                 callee: Box::new(MethodCall {
                     inner_call: Box::new(Call {
-                        callee: Box::new(Callee(NameIndex(1))),
+                        callee: Box::new(CallRoot(NameIndex(1))),
                         function_id: NameIndex(1),
                         args: vec![],
                         block: None
@@ -1360,7 +1360,7 @@ Program:
 
     #[test]
     fn parse_simply_call_with_block() {
-        use Expression::{Block, Call, Callee};
+        use Expression::{Block, Call, CallRoot};
         let source = "
 call:
     block
@@ -1371,13 +1371,13 @@ call:
         assert_eq!(
             result,
             Call {
-                callee: Box::new(Callee(NameIndex(1))),
+                callee: Box::new(CallRoot(NameIndex(1))),
                 function_id: NameIndex(1),
                 args: vec![],
                 block: Some(Box::new(Block {
                     expressions: vec![],
                     value: Box::new(Call {
-                        callee: Box::new(Callee(NameIndex(2))),
+                        callee: Box::new(CallRoot(NameIndex(2))),
                         function_id: NameIndex(2),
                         args: vec![],
                         block: None
