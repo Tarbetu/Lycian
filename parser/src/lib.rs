@@ -237,6 +237,7 @@ impl<'a> Parser<'a> {
         let mut expressions = vec![];
 
         while !self.is_match(&[Dedent]) {
+            self.skip_while(&[Endline]);
             expressions.push(self.expression()?);
 
             self.consume(Endline, "Endline")?;
@@ -316,6 +317,7 @@ impl<'a> Parser<'a> {
                 let mut arms = vec![];
 
                 while !self.is_match(&[Dedent]) {
+                    self.skip_while(&[Endline]);
                     let pattern = self.pattern()?;
 
                     self.consume(Arrow, "Arrow")?;
@@ -476,10 +478,10 @@ impl<'a> Parser<'a> {
         let mut expr = self.primary()?;
 
         loop {
-            if let CallRoot(function_id) = expr {
+            if let CallRoot(name_id) = expr {
                 expr = Call {
                     callee: Box::new(expr),
-                    function_id,
+                    name_id,
                     args: vec![],
                     block: None,
                 }
@@ -491,9 +493,7 @@ impl<'a> Parser<'a> {
                 };
 
                 let Call {
-                    callee,
-                    function_id,
-                    ..
+                    callee, name_id, ..
                 } = expr
                 else {
                     return Err(ParserError::UnexpectedToken {
@@ -505,12 +505,12 @@ impl<'a> Parser<'a> {
 
                 expr = Call {
                     callee,
-                    function_id,
+                    name_id,
                     args,
                     block: None,
                 };
             } else if self.is_match(&[Dot]) {
-                let CallRoot(function_id) = self.primary()? else {
+                let CallRoot(name_id) = self.primary()? else {
                     return Err(ParserError::UnexpectedToken {
                         expected: "CallRoot",
                         found: self.peek().map(|t| t.kind).unwrap_or(TokenType::Eof),
@@ -520,7 +520,7 @@ impl<'a> Parser<'a> {
 
                 expr = Call {
                     callee: Box::new(expr),
-                    function_id,
+                    name_id,
                     args: vec![],
                     block: None,
                 };
@@ -534,13 +534,13 @@ impl<'a> Parser<'a> {
                 match expr {
                     Call {
                         callee,
-                        function_id,
+                        name_id,
                         args,
                         block: _,
                     } => {
                         expr = Call {
                             callee,
-                            function_id,
+                            name_id,
                             args,
                             block,
                         }
@@ -1277,8 +1277,40 @@ Program:
             result,
             Expression::Call {
                 callee: Box::new(Expression::CallRoot(NameIndex(1))),
-                function_id: NameIndex(1),
+                name_id: NameIndex(1),
                 args: vec![],
+                block: None,
+            }
+        )
+    }
+
+    #[test]
+    fn parse_simply_call_with_redundant_paranthesis() {
+        let mut parser = initialize_parser("call()");
+        let result = parser.call().unwrap();
+
+        assert_eq!(
+            result,
+            Expression::Call {
+                callee: Box::new(Expression::CallRoot(NameIndex(1))),
+                name_id: NameIndex(1),
+                args: vec![],
+                block: None,
+            }
+        )
+    }
+
+    #[test]
+    fn parse_call_with_args() {
+        let mut parser = initialize_parser("call(5)");
+        let result = parser.call().unwrap();
+
+        assert_eq!(
+            result,
+            Expression::Call {
+                callee: Box::new(Expression::CallRoot(NameIndex(1))),
+                name_id: NameIndex(1),
+                args: vec![Expression::Literal(LiteralIndex(0))],
                 block: None,
             }
         )
@@ -1295,11 +1327,11 @@ Program:
             Call {
                 callee: Box::new(Call {
                     callee: Box::new(CallRoot(NameIndex(1))),
-                    function_id: NameIndex(1),
+                    name_id: NameIndex(1),
                     args: vec![],
                     block: None
                 }),
-                function_id: NameIndex(2),
+                name_id: NameIndex(2),
                 args: vec![],
                 block: None
             }
@@ -1317,11 +1349,11 @@ Program:
             Call {
                 callee: Box::new(Call {
                     callee: Box::new(CallRoot(NameIndex(1))),
-                    function_id: NameIndex(1),
+                    name_id: NameIndex(1),
                     args: vec![],
                     block: None
                 }),
-                function_id: NameIndex(2),
+                name_id: NameIndex(2),
                 args: vec![],
                 block: None
             }
@@ -1339,11 +1371,11 @@ Program:
             Call {
                 callee: Box::new(Call {
                     callee: Box::new(CallRoot(NameIndex(1))),
-                    function_id: NameIndex(1),
+                    name_id: NameIndex(1),
                     args: vec![],
                     block: None
                 }),
-                function_id: NameIndex(1),
+                name_id: NameIndex(1),
                 args: vec![],
                 block: None
             }
@@ -1364,13 +1396,13 @@ call:
             result,
             Call {
                 callee: Box::new(CallRoot(NameIndex(1))),
-                function_id: NameIndex(1),
+                name_id: NameIndex(1),
                 args: vec![],
                 block: Some(Box::new(Block {
                     expressions: vec![],
                     value: Box::new(Call {
                         callee: Box::new(CallRoot(NameIndex(2))),
-                        function_id: NameIndex(2),
+                        name_id: NameIndex(2),
                         args: vec![],
                         block: None
                     }),

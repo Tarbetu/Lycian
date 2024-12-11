@@ -20,7 +20,7 @@ pub enum Expression {
 
     Call {
         callee: Box<Expression>,
-        function_id: NameIndex,
+        name_id: NameIndex,
         args: Vec<Expression>,
         block: Option<Box<Expression>>,
     },
