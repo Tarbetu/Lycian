@@ -166,13 +166,9 @@ impl<'a> Parser<'a> {
         let mut patterns = Vec::new();
 
         if self.is_match(&[ParenOpen]) {
-            self.skip_while(&[Endline]);
-
             patterns.push(self.pattern()?);
 
             while self.is_match(&[Comma, Endline]) {
-                self.skip_while(&[Endline]);
-
                 patterns.push(self.pattern()?);
             }
 
@@ -237,8 +233,6 @@ impl<'a> Parser<'a> {
                 context_info.unwrap(),
             ));
         }
-
-        self.skip_while(&[Endline]);
 
         let mut expressions = vec![];
 
@@ -316,8 +310,6 @@ impl<'a> Parser<'a> {
         if self.is_match(&[Match]) {
             let scrutinee = self.expression()?;
 
-            self.skip_while(&[Endline]);
-
             self.consume(Indent, "Indendation start")?;
 
             let arms = {
@@ -329,7 +321,6 @@ impl<'a> Parser<'a> {
                     self.consume(Arrow, "Arrow")?;
 
                     let expr = if self.is_match(&[Endline]) {
-                        self.skip_while(&[Endline]);
                         self.consume(Indent, "Endline")?;
                         self.block(true, None)?
                     } else {
@@ -646,8 +637,6 @@ impl<'a> Parser<'a> {
                 });
 
                 while self.is_match(&[Comma]) {
-                    self.skip_while(&[Endline]);
-
                     let expr = self.expression()?;
 
                     list.push(match self.eval_constexpr(&expr)? {
