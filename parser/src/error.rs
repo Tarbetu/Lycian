@@ -54,7 +54,7 @@ impl Display for ParserError {
             UnexpectedBlockParams(line, context) => {
                 write!(
                     f,
-                    "[{}] Unexpected block parameters in the {}",
+                    "[{}] Block parameters is not allowed in {}",
                     line, context
                 )
             }

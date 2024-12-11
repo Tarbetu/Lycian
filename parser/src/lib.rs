@@ -150,7 +150,7 @@ impl<'a> Parser<'a> {
 
             self.consume(Equal, "Equal sign")?;
 
-            let body = self.block(false, Some("Method"))?;
+            let body = self.block(false, Some("Method Definition"))?;
 
             let mut environment = AHashMap::new();
             swap(&mut self.current_environment, &mut environment);
@@ -231,7 +231,7 @@ impl<'a> Parser<'a> {
             vec![]
         };
 
-        if params.is_empty() && params_expected {
+        if !(params_expected || params.is_empty()) {
             return Err(ParserError::UnexpectedBlockParams(
                 self.previous().line,
                 context_info.unwrap(),
@@ -282,7 +282,7 @@ impl<'a> Parser<'a> {
 
             self.consume(Equal, "Equal sign")?;
 
-            let value = self.block(false, Some("Function"))?;
+            let value = self.block(false, Some("Function Definition"))?;
 
             let name = self.consume_name_from_token(token, "Function Name")?;
             self.advance();
@@ -480,22 +480,49 @@ impl<'a> Parser<'a> {
     }
 
     fn call(&mut self) -> ParserResult<Expression> {
-        use Expression::{Call, CallRoot, MethodCall};
+        use Expression::{Call, CallRoot};
         use TokenType::{Colon, Dot, ParenClose, ParenOpen};
         let mut expr = self.primary()?;
 
         loop {
-            if self.is_match(&[ParenOpen]) {
+            if let CallRoot(function_id) = expr {
+                expr = Call {
+                    callee: Box::new(expr),
+                    function_id,
+                    args: vec![],
+                    block: None,
+                }
+            } else if self.is_match(&[ParenOpen]) {
                 let args = if self.is_match(&[ParenClose]) {
                     vec![]
                 } else {
                     self.arguments()?
                 };
 
-                let CallRoot(function_id) = expr else {
+                let Call {
+                    callee,
+                    function_id,
+                    ..
+                } = expr
+                else {
                     return Err(ParserError::UnexpectedToken {
                         expected: "CallRoot",
-                        found: self.peek().unwrap().kind,
+                        found: self.peek().map(|t| t.kind).unwrap_or(TokenType::Eof),
+                        line: self.peek().map(|t| t.line),
+                    });
+                };
+
+                expr = Call {
+                    callee,
+                    function_id,
+                    args,
+                    block: None,
+                };
+            } else if self.is_match(&[Dot]) {
+                let CallRoot(function_id) = self.primary()? else {
+                    return Err(ParserError::UnexpectedToken {
+                        expected: "CallRoot",
+                        found: self.peek().map(|t| t.kind).unwrap_or(TokenType::Eof),
                         line: self.peek().map(|t| t.line),
                     });
                 };
@@ -503,27 +530,9 @@ impl<'a> Parser<'a> {
                 expr = Call {
                     callee: Box::new(expr),
                     function_id,
-                    args,
-                    block: None,
-                };
-            } else if let CallRoot(function_id) = expr {
-                expr = Call {
-                    callee: Box::new(expr),
-                    function_id,
                     args: vec![],
                     block: None,
-                }
-            } else if self.is_match(&[Dot]) {
-                if let CallRoot(function_id) = self.primary()? {
-                    expr = Call {
-                        callee: Box::new(MethodCall {
-                            inner_call: Box::new(expr),
-                        }),
-                        function_id,
-                        args: vec![],
-                        block: None,
-                    };
-                }
+                };
             } else {
                 let block = if self.is_match(&[Colon]) {
                     Some(Box::new(self.block(true, None)?))
@@ -545,9 +554,9 @@ impl<'a> Parser<'a> {
                             block,
                         }
                     }
-                    MethodCall { .. } | CallRoot(_) => {
+                    CallRoot(_) => {
                         unreachable!(
-                            "MethodCall and CallRoot should be handled in previous iterations!\nCurrent expr: {:#?}", expr
+                            "CallRoot have to be handled in previous iterations!\nCurrent expr: {:#?}", expr
                         );
                     }
                     _ => (),
@@ -563,16 +572,16 @@ impl<'a> Parser<'a> {
     fn arguments(&mut self) -> ParserResult<Vec<Expression>> {
         use TokenType::{Comma, Endline, ParenClose};
 
-        let mut arguments = vec![];
-        arguments.push(self.expression()?);
+        let mut args = vec![];
+        args.push(self.expression()?);
 
         while self.is_match(&[Comma, Endline]) {
-            arguments.push(self.expression()?);
+            args.push(self.expression()?);
         }
 
         self.consume(ParenClose, "")?;
 
-        Ok(arguments)
+        Ok(args)
     }
 
     fn primary(&mut self) -> ParserResult<Expression> {
@@ -1288,20 +1297,18 @@ Program:
 
     #[test]
     fn parse_method_call() {
-        use Expression::{Call, CallRoot, MethodCall};
+        use Expression::{Call, CallRoot};
         let mut parser = initialize_parser("function.method");
         let result = parser.call().unwrap();
 
         assert_eq!(
             result,
             Call {
-                callee: Box::new(MethodCall {
-                    inner_call: Box::new(Call {
-                        callee: Box::new(CallRoot(NameIndex(1))),
-                        function_id: NameIndex(1),
-                        args: vec![],
-                        block: None
-                    })
+                callee: Box::new(Call {
+                    callee: Box::new(CallRoot(NameIndex(1))),
+                    function_id: NameIndex(1),
+                    args: vec![],
+                    block: None
                 }),
                 function_id: NameIndex(2),
                 args: vec![],
@@ -1312,20 +1319,18 @@ Program:
 
     #[test]
     fn parse_method_call_with_empty_paranthesis() {
-        use Expression::{Call, CallRoot, MethodCall};
+        use Expression::{Call, CallRoot};
         let mut parser = initialize_parser("function().method()");
         let result = parser.call().unwrap();
 
         assert_eq!(
             result,
             Call {
-                callee: Box::new(MethodCall {
-                    inner_call: Box::new(Call {
-                        callee: Box::new(CallRoot(NameIndex(1))),
-                        function_id: NameIndex(1),
-                        args: vec![],
-                        block: None
-                    })
+                callee: Box::new(Call {
+                    callee: Box::new(CallRoot(NameIndex(1))),
+                    function_id: NameIndex(1),
+                    args: vec![],
+                    block: None
                 }),
                 function_id: NameIndex(2),
                 args: vec![],
@@ -1336,20 +1341,18 @@ Program:
 
     #[test]
     fn parse_method_call_with_same_name_with_method() {
-        use Expression::{Call, CallRoot, MethodCall};
+        use Expression::{Call, CallRoot};
         let mut parser = initialize_parser("call.call");
         let result = parser.call().unwrap();
 
         assert_eq!(
             result,
             Call {
-                callee: Box::new(MethodCall {
-                    inner_call: Box::new(Call {
-                        callee: Box::new(CallRoot(NameIndex(1))),
-                        function_id: NameIndex(1),
-                        args: vec![],
-                        block: None
-                    })
+                callee: Box::new(Call {
+                    callee: Box::new(CallRoot(NameIndex(1))),
+                    function_id: NameIndex(1),
+                    args: vec![],
+                    block: None
                 }),
                 function_id: NameIndex(1),
                 args: vec![],

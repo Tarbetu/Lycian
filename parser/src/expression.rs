@@ -27,10 +27,6 @@ pub enum Expression {
 
     CallRoot(NameIndex),
 
-    MethodCall {
-        inner_call: Box<Expression>,
-    },
-
     IndexOperator(Box<Expression>, Box<Expression>),
 
     ClassSelf,
