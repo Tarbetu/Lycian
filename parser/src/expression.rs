@@ -19,13 +19,11 @@ pub enum Expression {
     },
 
     Call {
-        callee: Box<Expression>,
         name_id: NameIndex,
-        args: Vec<Expression>,
+        caller: Option<Box<Expression>>,
+        args: Vec<Pattern>,
         block: Option<Box<Expression>>,
     },
-
-    CallRoot(NameIndex),
 
     IndexOperator(Box<Expression>, Box<Expression>),
 

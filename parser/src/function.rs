@@ -4,6 +4,7 @@ use crate::Expression;
 use crate::NameIndex;
 use crate::Pattern;
 
+#[derive(Debug, PartialEq)]
 pub struct Function {
     pub name: NameIndex,
     pub params: Vec<Pattern>,

@@ -15,6 +15,7 @@ pub enum ParserError {
     PatternListTooLong(usize),
     ErrorWithMessage(Box<ParserError>, &'static str),
     UnexpectedBlockParams(usize, &'static str),
+    UnexpectedBlock(usize, TokenType),
 }
 
 impl Display for ParserError {
@@ -57,6 +58,9 @@ impl Display for ParserError {
                     "[{}] Block parameters is not allowed in {}",
                     line, context
                 )
+            }
+            UnexpectedBlock(line, token_type) => {
+                write!(f, "[{}] Unexpected block for {}", line, token_type)
             }
         }
     }

@@ -129,13 +129,17 @@ impl<'a> Parser<'a> {
 
     fn declaration(&mut self) -> ParserResult<Option<Statement>> {
         use Statement::{ClassState, Method};
-        use TokenType::{Arrow, Dedent, Endline, Equal};
+        use TokenType::{Arrow, Dedent, Endline, Equal, ParenOpen};
 
         let decorator = self.consume_decorator()?;
 
         let name = self.consume_name()?;
 
-        let patterns = self.pattern_list()?;
+        let patterns = if self.is_match(&[ParenOpen]) {
+            self.pattern_list()?
+        } else {
+            vec![]
+        };
 
         if self.is_match(&[Endline]) {
             Ok(Some(ClassState { name, patterns }))
@@ -161,19 +165,17 @@ impl<'a> Parser<'a> {
     }
 
     fn pattern_list(&mut self) -> ParserResult<Vec<Pattern>> {
-        use TokenType::{Comma, Endline, ParenClose, ParenOpen};
+        use TokenType::{Comma, Endline, ParenClose};
 
         let mut patterns = Vec::new();
 
-        if self.is_match(&[ParenOpen]) {
+        patterns.push(self.pattern()?);
+
+        while self.is_match(&[Comma, Endline]) {
             patterns.push(self.pattern()?);
-
-            while self.is_match(&[Comma, Endline]) {
-                patterns.push(self.pattern()?);
-            }
-
-            self.consume(ParenClose, "End of Paranthesis")?;
         }
+
+        self.consume(ParenClose, "End of Paranthesis")?;
 
         if patterns.len() >= 255 {
             return Err(ParserError::PatternListTooLong(self.previous().line));
@@ -238,6 +240,7 @@ impl<'a> Parser<'a> {
 
         while !self.is_match(&[Dedent]) {
             self.skip_while(&[Endline]);
+
             expressions.push(self.expression()?);
 
             self.consume(Endline, "Endline")?;
@@ -263,30 +266,33 @@ impl<'a> Parser<'a> {
     fn function(&mut self) -> ParserResult<Expression> {
         use TokenType::*;
 
-        let expr = self.lambda()?;
+        let mut expr = self.lambda()?;
+        dbg!(&expr);
         let token = self.peek();
+        let params = if self.is_match(&[ParenOpen]) {
+            self.pattern_list()?
+        } else {
+            vec![]
+        };
 
-        if self.is_match(&[ParenOpen]) {
-            let params = self.pattern_list()?;
+        let return_type = if self.is_match(&[Arrow]) {
+            Some(self.expression()?)
+        } else {
+            None
+        };
 
-            let return_type = if self.is_match(&[Arrow]) {
-                Some(self.expression()?)
-            } else {
-                None
-            };
-
-            self.consume(Equal, "Equal sign")?;
-
+        if self.is_match(&[Equal]) {
             let value = self.block(false, Some("Function Definition"))?;
 
             let name = self.consume_name_from_token(token, "Function Name")?;
             self.advance();
 
             self.push_function(name, params, return_type, value, String::new());
-            Ok(Expression::Function(name))
-        } else {
-            Ok(expr)
+
+            expr = Expression::Function(name)
         }
+
+        Ok(expr)
     }
 
     fn lambda(&mut self) -> ParserResult<Expression> {
@@ -473,44 +479,37 @@ impl<'a> Parser<'a> {
     }
 
     fn call(&mut self) -> ParserResult<Expression> {
-        use Expression::{Call, CallRoot};
+        use Expression::Call;
         use TokenType::{Colon, Dot, ParenClose, ParenOpen};
         let mut expr = self.primary()?;
 
         loop {
-            if let CallRoot(name_id) = expr {
-                expr = Call {
-                    callee: Box::new(expr),
-                    name_id,
-                    args: vec![],
-                    block: None,
-                }
-            } else if self.is_match(&[ParenOpen]) {
+            if self.is_match(&[ParenOpen]) {
                 let args = if self.is_match(&[ParenClose]) {
                     vec![]
                 } else {
-                    self.arguments()?
+                    self.pattern_list()?
                 };
 
-                let Call {
-                    callee, name_id, ..
-                } = expr
-                else {
-                    return Err(ParserError::UnexpectedToken {
-                        expected: "CallRoot",
-                        found: self.peek().map(|t| t.kind).unwrap_or(TokenType::Eof),
-                        line: self.peek().map(|t| t.line),
-                    });
-                };
-
-                expr = Call {
-                    callee,
-                    name_id,
-                    args,
-                    block: None,
+                expr = match expr {
+                    Call {
+                        caller, name_id, ..
+                    } => Call {
+                        caller,
+                        name_id,
+                        args,
+                        block: None,
+                    },
+                    _ => {
+                        return Err(ParserError::UnexpectedToken {
+                            expected: "CallRoot",
+                            found: self.peek().map(|t| t.kind).unwrap_or(TokenType::Eof),
+                            line: self.peek().map(|t| t.line),
+                        })
+                    }
                 };
             } else if self.is_match(&[Dot]) {
-                let CallRoot(name_id) = self.primary()? else {
+                let Call { name_id, .. } = self.primary()? else {
                     return Err(ParserError::UnexpectedToken {
                         expected: "CallRoot",
                         found: self.peek().map(|t| t.kind).unwrap_or(TokenType::Eof),
@@ -519,38 +518,36 @@ impl<'a> Parser<'a> {
                 };
 
                 expr = Call {
-                    callee: Box::new(expr),
+                    caller: Some(Box::new(expr)),
                     name_id,
                     args: vec![],
                     block: None,
                 };
             } else {
-                let block = if self.is_match(&[Colon]) {
-                    Some(Box::new(self.block(true, None)?))
-                } else {
-                    None
-                };
+                if self.is_match(&[Colon]) {
+                    let block = Some(Box::new(self.block(true, None)?));
 
-                match expr {
-                    Call {
-                        callee,
-                        name_id,
-                        args,
-                        block: _,
-                    } => {
-                        expr = Call {
-                            callee,
+                    match expr {
+                        Call {
+                            caller,
                             name_id,
                             args,
-                            block,
+                            block: _,
+                        } => {
+                            expr = Call {
+                                caller,
+                                name_id,
+                                args,
+                                block,
+                            }
                         }
-                    }
-                    CallRoot(_) => {
-                        unreachable!(
-                            "CallRoot have to be handled in previous iterations!\nCurrent expr: {:#?}", expr
-                        );
-                    }
-                    _ => (),
+                        _ => {
+                            return Err(ParserError::UnexpectedBlock(
+                                self.previous().line,
+                                self.previous().kind,
+                            ));
+                        }
+                    };
                 };
 
                 break;
@@ -558,21 +555,6 @@ impl<'a> Parser<'a> {
         }
 
         Ok(expr)
-    }
-
-    fn arguments(&mut self) -> ParserResult<Vec<Expression>> {
-        use TokenType::{Comma, Endline, ParenClose};
-
-        let mut args = vec![];
-        args.push(self.expression()?);
-
-        while self.is_match(&[Comma, Endline]) {
-            args.push(self.expression()?);
-        }
-
-        self.consume(ParenClose, "")?;
-
-        Ok(args)
     }
 
     fn primary(&mut self) -> ParserResult<Expression> {
@@ -587,7 +569,12 @@ impl<'a> Parser<'a> {
         } else if self.is_match(&[Super]) {
             Expression::Super
         } else if self.is_match(&[Constant, Identifier, Wildcard]) {
-            Expression::CallRoot(self.consume_name_from_token(Some(self.previous()), "CallRoot")?)
+            Expression::Call {
+                name_id: self.consume_name_from_token(Some(self.previous()), "CallRoot")?,
+                block: None,
+                caller: None,
+                args: vec![],
+            }
         } else {
             Expression::Literal(self.catch_literal()?)
         })
@@ -698,12 +685,13 @@ impl<'a> Parser<'a> {
 
     fn consume(&mut self, kind: TokenType, expected: &'static str) -> ParserResult<()> {
         if !self.is_match(&[kind]) {
-            let token = self.peek().unwrap();
+            let found = self.peek().map(|t| t.kind).unwrap_or(TokenType::Eof);
+            let line = self.peek().map(|t| t.line);
 
             return Err(ParserError::UnexpectedToken {
                 expected,
-                found: token.kind,
-                line: Some(token.line),
+                found,
+                line,
             });
         }
 
@@ -865,6 +853,11 @@ impl<'a> Parser<'a> {
         Ok(match expr {
             Literal(index) => Some(Expression::Literal(*index)),
             Grouping(expr) => self.eval_constexpr(expr)?,
+            Block {
+                expressions,
+                value,
+                params,
+            } if expressions.is_empty() && params.is_empty() => self.eval_constexpr(value)?,
             Binary(lhs, op, rhs) => {
                 let Some(Literal(lhs_index)) = self.eval_constexpr(lhs)? else {
                     return Ok(None);
@@ -1276,10 +1269,10 @@ Program:
         assert_eq!(
             result,
             Expression::Call {
-                callee: Box::new(Expression::CallRoot(NameIndex(1))),
                 name_id: NameIndex(1),
-                args: vec![],
                 block: None,
+                args: vec![],
+                caller: None
             }
         )
     }
@@ -1292,10 +1285,10 @@ Program:
         assert_eq!(
             result,
             Expression::Call {
-                callee: Box::new(Expression::CallRoot(NameIndex(1))),
                 name_id: NameIndex(1),
-                args: vec![],
                 block: None,
+                args: vec![],
+                caller: None
             }
         )
     }
@@ -1308,83 +1301,21 @@ Program:
         assert_eq!(
             result,
             Expression::Call {
-                callee: Box::new(Expression::CallRoot(NameIndex(1))),
                 name_id: NameIndex(1),
-                args: vec![Expression::Literal(LiteralIndex(0))],
                 block: None,
-            }
-        )
-    }
-
-    #[test]
-    fn parse_method_call() {
-        use Expression::{Call, CallRoot};
-        let mut parser = initialize_parser("function.method");
-        let result = parser.call().unwrap();
-
-        assert_eq!(
-            result,
-            Call {
-                callee: Box::new(Call {
-                    callee: Box::new(CallRoot(NameIndex(1))),
-                    name_id: NameIndex(1),
-                    args: vec![],
-                    block: None
-                }),
-                name_id: NameIndex(2),
-                args: vec![],
-                block: None
-            }
-        )
-    }
-
-    #[test]
-    fn parse_method_call_with_empty_paranthesis() {
-        use Expression::{Call, CallRoot};
-        let mut parser = initialize_parser("function().method()");
-        let result = parser.call().unwrap();
-
-        assert_eq!(
-            result,
-            Call {
-                callee: Box::new(Call {
-                    callee: Box::new(CallRoot(NameIndex(1))),
-                    name_id: NameIndex(1),
-                    args: vec![],
-                    block: None
-                }),
-                name_id: NameIndex(2),
-                args: vec![],
-                block: None
-            }
-        )
-    }
-
-    #[test]
-    fn parse_method_call_with_same_name_with_method() {
-        use Expression::{Call, CallRoot};
-        let mut parser = initialize_parser("call.call");
-        let result = parser.call().unwrap();
-
-        assert_eq!(
-            result,
-            Call {
-                callee: Box::new(Call {
-                    callee: Box::new(CallRoot(NameIndex(1))),
-                    name_id: NameIndex(1),
-                    args: vec![],
-                    block: None
-                }),
-                name_id: NameIndex(1),
-                args: vec![],
-                block: None
+                args: vec![Pattern {
+                    value: Some(Expression::Literal(LiteralIndex(0))),
+                    name: None,
+                    condition: None
+                }],
+                caller: None
             }
         )
     }
 
     #[test]
     fn parse_simply_call_with_block() {
-        use Expression::{Block, Call, CallRoot};
+        use Expression::{Block, Call};
         let source = "
 call:
     block
@@ -1395,19 +1326,157 @@ call:
         assert_eq!(
             result,
             Call {
-                callee: Box::new(CallRoot(NameIndex(1))),
                 name_id: NameIndex(1),
-                args: vec![],
                 block: Some(Box::new(Block {
                     expressions: vec![],
                     value: Box::new(Call {
-                        callee: Box::new(CallRoot(NameIndex(2))),
                         name_id: NameIndex(2),
+                        block: None,
                         args: vec![],
-                        block: None
+                        caller: None
                     }),
                     params: vec![],
                 })),
+                args: vec![],
+                caller: None
+            }
+        )
+    }
+
+    #[test]
+    fn parse_method_call() {
+        use Expression::Call;
+        let mut parser = initialize_parser("function.method");
+        let result = parser.call().unwrap();
+
+        assert_eq!(
+            result,
+            Call {
+                caller: Some(Box::new(Call {
+                    name_id: NameIndex(1),
+                    block: None,
+                    args: vec![],
+                    caller: None
+                })),
+                name_id: NameIndex(2),
+                args: vec![],
+                block: None
+            }
+        )
+    }
+
+    #[test]
+    fn parse_method_call_with_empty_paranthesis() {
+        use Expression::Call;
+        let mut parser = initialize_parser("function().method()");
+        let result = parser.call().unwrap();
+
+        assert_eq!(
+            result,
+            Call {
+                caller: Some(Box::new(Call {
+                    name_id: NameIndex(1),
+                    block: None,
+                    args: vec![],
+                    caller: None
+                })),
+                name_id: NameIndex(2),
+                args: vec![],
+                block: None
+            }
+        )
+    }
+
+    #[test]
+    fn parse_method_call_with_same_name_with_method() {
+        use Expression::Call;
+        let mut parser = initialize_parser("call.call");
+        let result = parser.call().unwrap();
+
+        assert_eq!(
+            result,
+            Call {
+                caller: Some(Box::new(Call {
+                    name_id: NameIndex(1),
+                    block: None,
+                    args: vec![],
+                    caller: None
+                })),
+                name_id: NameIndex(1),
+                args: vec![],
+                block: None
+            }
+        )
+    }
+
+    #[test]
+    fn parse_function_assignment() {
+        let mut parser = initialize_parser("result = 0 * 2");
+        let result = parser.expression().unwrap();
+
+        assert_eq!(result, Expression::Function(NameIndex(1)));
+
+        assert_eq!(
+            parser
+                .current_environment
+                .get(&NameIndex(1))
+                .unwrap()
+                .first()
+                .unwrap(),
+            &Function {
+                name: NameIndex(1),
+                params: vec![],
+                return_type: None,
+                environment: None,
+                decorator: String::new(),
+                body: Expression::Binary(
+                    Box::new(Expression::Literal(LiteralIndex(0))),
+                    Operator::Multiply,
+                    Box::new(Expression::Literal(LiteralIndex(1)))
+                )
+            }
+        );
+    }
+
+    #[test]
+    fn parse_map_example() {
+        use Expression::{Block, Call};
+        let source = "
+result = [1, 2, 3, 4, 5].map: |i|
+    i * 2
+";
+        let mut parser = initialize_parser(source);
+        let result = parser.expression().unwrap();
+
+        assert_eq!(result, Expression::Function(NameIndex(1)));
+
+        assert_eq!(
+            parser
+                .current_environment
+                .get(&NameIndex(1))
+                .unwrap()
+                .first()
+                .unwrap(),
+            &Function {
+                name: NameIndex(1),
+                params: vec![],
+                return_type: None,
+                environment: None,
+                decorator: String::new(),
+                body: Call {
+                    caller: Some(Box::new(Expression::Literal(LiteralIndex(0)))),
+                    name_id: NameIndex(0),
+                    args: vec![],
+                    block: Some(Box::new(Block {
+                        expressions: vec![],
+                        value: Box::new(Expression::Binary(
+                            Box::new(Expression::Literal(LiteralIndex(0))),
+                            Operator::Multiply,
+                            Box::new(Expression::Literal(LiteralIndex(1)))
+                        )),
+                        params: vec![]
+                    }))
+                }
             }
         )
     }
