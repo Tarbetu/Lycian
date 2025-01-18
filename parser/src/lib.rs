@@ -89,7 +89,7 @@ impl<'a> Parser<'a> {
         let name = self.consume_class_name()?;
 
         self.consume(Colon, "':'")?;
-        self.consume(Endline, "End of line")?;
+        self.consume_endline()?;
         self.consume(Indent, "Indendation start")?;
 
         let mut ancestors = Vec::new();
@@ -105,7 +105,7 @@ impl<'a> Parser<'a> {
 
         let mut states = vec![];
 
-        while self.peek().is_some() {
+        while !self.is_match(&[Dedent]) {
             if let Some(declaration) = self.declaration()? {
                 match declaration {
                     state @ ClassState { .. } => states.push(state),
@@ -129,22 +129,20 @@ impl<'a> Parser<'a> {
 
     fn declaration(&mut self) -> ParserResult<Option<Statement>> {
         use Statement::{ClassState, Method};
-        use TokenType::{Arrow, Dedent, Endline, Equal, ParenOpen};
+        use TokenType::{Arrow, Endline, Equal, ParenClose, ParenOpen};
 
         let decorator = self.consume_decorator()?;
 
         let name = self.consume_name()?;
 
         let patterns = if self.is_match(&[ParenOpen]) {
-            self.pattern_list()?
+            self.pattern_list(ParenClose, "Closing Paranthesis")?
         } else {
             vec![]
         };
 
         if self.is_match(&[Endline]) {
             Ok(Some(ClassState { name, patterns }))
-        } else if self.is_match(&[Dedent]) {
-            Ok(None)
         } else {
             let return_type = if self.is_match(&[Arrow]) {
                 Some(self.expression()?)
@@ -164,8 +162,12 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn pattern_list(&mut self) -> ParserResult<Vec<Pattern>> {
-        use TokenType::{Comma, Endline, ParenClose};
+    fn pattern_list(
+        &mut self,
+        end_with: TokenType,
+        expected: &'static str,
+    ) -> ParserResult<Vec<Pattern>> {
+        use TokenType::{Comma, Endline};
 
         let mut patterns = Vec::new();
 
@@ -175,7 +177,7 @@ impl<'a> Parser<'a> {
             patterns.push(self.pattern()?);
         }
 
-        self.consume(ParenClose, "End of Paranthesis")?;
+        self.consume(end_with, expected)?;
 
         if patterns.len() >= 255 {
             return Err(ParserError::PatternListTooLong(self.previous().line));
@@ -188,7 +190,7 @@ impl<'a> Parser<'a> {
         use TokenType::*;
 
         let (name, value) = if self.is_match(&[Wildcard, Identifier, Constant]) {
-            let name = self.push_name(&self.peek().unwrap());
+            let name = self.push_name(&self.previous());
 
             if self.is_match(&[Colon]) {
                 let value = self.expression()?;
@@ -219,16 +221,16 @@ impl<'a> Parser<'a> {
         params_expected: bool,
         context_info: Option<&'static str>,
     ) -> ParserResult<Expression> {
-        use TokenType::{Dedent, Endline, Pipe};
+        use TokenType::{Dedent, Endline, Indent, Pipe};
 
         let params = if self.is_match(&[Pipe]) {
-            let result = self.pattern_list()?;
-            self.consume(Pipe, "| symbol")?;
-            result
+            self.pattern_list(Pipe, "| symbol")?
         } else {
             vec![]
         };
 
+        // Remove this concept, it's blocks the lambda
+        // Or is there ambiguity?
         if !(params_expected || params.is_empty()) {
             return Err(ParserError::UnexpectedBlockParams(
                 self.previous().line,
@@ -236,19 +238,28 @@ impl<'a> Parser<'a> {
             ));
         }
 
+        self.skip_while(&[Endline]);
+        let indented_block = self.is_match(&[Indent]);
+
         let mut expressions = vec![];
 
-        while !self.is_match(&[Dedent]) {
-            self.skip_while(&[Endline]);
+        if indented_block {
+            while !self.is_match(&[Dedent]) {
+                expressions.push(self.expression()?);
 
+                self.consume_endline()?;
+            }
+        } else {
             expressions.push(self.expression()?);
 
-            self.consume(Endline, "Endline")?;
+            self.consume_endline()?;
         }
 
         let value = expressions.pop().unwrap();
 
         if let Some(value) = self.eval_constexpr(&value)? {
+            Ok(value)
+        } else if expressions.is_empty() && params.is_empty() {
             Ok(value)
         } else {
             Ok(Expression::Block {
@@ -266,11 +277,10 @@ impl<'a> Parser<'a> {
     fn function(&mut self) -> ParserResult<Expression> {
         use TokenType::*;
 
+        let name_token = self.peek();
         let mut expr = self.lambda()?;
-        dbg!(&expr);
-        let token = self.peek();
         let params = if self.is_match(&[ParenOpen]) {
-            self.pattern_list()?
+            self.pattern_list(ParenClose, "Closing Paranthesis")?
         } else {
             vec![]
         };
@@ -284,12 +294,12 @@ impl<'a> Parser<'a> {
         if self.is_match(&[Equal]) {
             let value = self.block(false, Some("Function Definition"))?;
 
-            let name = self.consume_name_from_token(token, "Function Name")?;
+            let name = self.consume_name_from_token(name_token, "Function Name")?;
             self.advance();
 
             self.push_function(name, params, return_type, value, String::new());
 
-            expr = Expression::Function(name)
+            expr = Expression::Function(name);
         }
 
         Ok(expr)
@@ -299,12 +309,12 @@ impl<'a> Parser<'a> {
         use TokenType::Pipe;
 
         if self.is_match(&[Pipe]) {
-            let params = self.pattern_list()?;
-            self.consume(Pipe, "| symbol")?;
+            let params = self.pattern_list(Pipe, "| symbol")?;
             let expr = self.expression()?;
 
-            Ok(Expression::Lambda {
-                expression: Box::new(expr),
+            Ok(Expression::Block {
+                value: Box::new(expr),
+                expressions: vec![],
                 params,
             })
         } else {
@@ -328,12 +338,7 @@ impl<'a> Parser<'a> {
 
                     self.consume(Arrow, "Arrow")?;
 
-                    let expr = if self.is_match(&[Endline]) {
-                        self.consume(Indent, "Endline")?;
-                        self.block(true, None)?
-                    } else {
-                        self.expression()?
-                    };
+                    let expr = self.block(true, None)?;
 
                     arms.push((pattern, expr));
                 }
@@ -488,7 +493,7 @@ impl<'a> Parser<'a> {
                 let args = if self.is_match(&[ParenClose]) {
                     vec![]
                 } else {
-                    self.pattern_list()?
+                    self.pattern_list(ParenClose, "Closing Paranthesis")?
                 };
 
                 expr = match expr {
@@ -636,6 +641,8 @@ impl<'a> Parser<'a> {
                     });
                 }
 
+                self.consume(BracketClose, "End of List")?;
+
                 Literal::LiteralList(list)
             }
         } else {
@@ -698,6 +705,23 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
+    fn consume_endline(&mut self) -> ParserResult<()> {
+        use TokenType::{Endline, Eof};
+
+        if !(self.is_match(&[Eof, Endline]) || self.peek().is_none()) {
+            let found = self.peek().map(|t| t.kind).unwrap_or(TokenType::Eof);
+            let line = self.peek().map(|t| t.line);
+
+            return Err(ParserError::UnexpectedToken {
+                expected: "End of Line",
+                found,
+                line,
+            });
+        }
+
+        Ok(())
+    }
+
     fn consume_class_name(&mut self) -> ParserResult<NameIndex> {
         self.advance();
         self.consume_name_from_token(Some(self.previous()), "Class Name")
@@ -736,14 +760,14 @@ impl<'a> Parser<'a> {
     }
 
     fn consume_decorator(&mut self) -> ParserResult<String> {
-        use TokenType::{Decorator, Endline};
+        use TokenType::Decorator;
 
         if self.is_match(&[Decorator]) {
             let token = self.peek().unwrap();
 
             let res = self.lexemes[token.start..token.end].join("");
             self.advance();
-            self.consume(Endline, "Endline")?;
+            self.consume_endline()?;
             Ok(res)
         } else {
             Ok(String::new())
@@ -835,13 +859,13 @@ impl<'a> Parser<'a> {
         if let Some(functions) = self.current_environment.get_mut(&name) {
             functions.push(function);
         } else {
-            self.current_methods.insert(name, vec![function]);
+            self.current_environment.insert(name, vec![function]);
         }
     }
 
     fn skip_while(&mut self, kinds: &[TokenType]) {
-        while self.is_match(kinds) {
-            self.advance();
+        if self.is_match(kinds) {
+            self.skip_while(kinds)
         }
     }
 
@@ -1315,7 +1339,7 @@ Program:
 
     #[test]
     fn parse_simply_call_with_block() {
-        use Expression::{Block, Call};
+        use Expression::Call;
         let source = "
 call:
     block
@@ -1327,15 +1351,11 @@ call:
             result,
             Call {
                 name_id: NameIndex(1),
-                block: Some(Box::new(Block {
-                    expressions: vec![],
-                    value: Box::new(Call {
-                        name_id: NameIndex(2),
-                        block: None,
-                        args: vec![],
-                        caller: None
-                    }),
-                    params: vec![],
+                block: Some(Box::new(Call {
+                    name_id: NameIndex(2),
+                    block: None,
+                    args: vec![],
+                    caller: None
                 })),
                 args: vec![],
                 caller: None
@@ -1429,12 +1449,13 @@ call:
                 return_type: None,
                 environment: None,
                 decorator: String::new(),
-                body: Expression::Binary(
-                    Box::new(Expression::Literal(LiteralIndex(0))),
-                    Operator::Multiply,
-                    Box::new(Expression::Literal(LiteralIndex(1)))
-                )
+                body: Expression::Literal(LiteralIndex(2))
             }
+        );
+
+        assert_eq!(
+            parser.get_literal(LiteralIndex(2)),
+            &Literal::Integer(create_number(0.0))
         );
     }
 
@@ -1465,19 +1486,37 @@ result = [1, 2, 3, 4, 5].map: |i|
                 decorator: String::new(),
                 body: Call {
                     caller: Some(Box::new(Expression::Literal(LiteralIndex(0)))),
-                    name_id: NameIndex(0),
+                    name_id: NameIndex(2),
                     args: vec![],
                     block: Some(Box::new(Block {
                         expressions: vec![],
                         value: Box::new(Expression::Binary(
-                            Box::new(Expression::Literal(LiteralIndex(0))),
+                            Box::new(Call {
+                                name_id: NameIndex(3),
+                                caller: None,
+                                args: vec![],
+                                block: None
+                            }),
                             Operator::Multiply,
                             Box::new(Expression::Literal(LiteralIndex(1)))
                         )),
-                        params: vec![]
+                        params: vec![Pattern {
+                            name: Some(NameIndex(3)),
+                            value: None,
+                            condition: None
+                        }]
                     }))
                 }
             }
         )
+    }
+
+    #[test]
+    fn test_is_match_with_multiple_kinds() {
+        use TokenType::{Equal, EqualEqual};
+
+        let mut parser = initialize_parser("==");
+
+        assert!(parser.is_match(&[Equal, EqualEqual]));
     }
 }
