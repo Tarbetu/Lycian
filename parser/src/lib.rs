@@ -986,7 +986,7 @@ mod tests {
     fn parse_simple_class() {
         let source = "
 Program:
-    main = 42
+    Main = 42
 ";
 
         let result = parse(source);
@@ -1017,7 +1017,7 @@ Program:
     fn parse_simple_class_with_constexpr() {
         let source = "
 Program:
-    main = 420 + 69
+    Main = 420 + 69
 ";
 
         let result = parse(source);
