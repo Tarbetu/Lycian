@@ -296,7 +296,6 @@ impl<'a> Parser<'a> {
             let value = self.block(false, Some("Function Definition"))?;
 
             let name = self.consume_name_from_token(name_token, "Function Name")?;
-            self.advance();
 
             self.push_function(name, params, return_type, value, String::new());
 
@@ -789,7 +788,7 @@ impl<'a> Parser<'a> {
 
         if let Some(index) = self.names.get_by_right(&name) {
             *index
-        } else if name.as_ref() == "main" {
+        } else if name.as_ref() == "Main" {
             NameIndex(0)
         } else {
             let next_index = self
@@ -865,8 +864,8 @@ impl<'a> Parser<'a> {
     }
 
     fn skip_while(&mut self, kinds: &[TokenType]) {
-        if self.is_match(kinds) {
-            self.skip_while(kinds)
+        while kinds.contains(&self.peek().map(|t| t.kind).unwrap_or(TokenType::Eof)) {
+            self.advance();
         }
     }
 
@@ -1527,7 +1526,7 @@ Program:
         x.map: |i|
             self.multiply_with_five(i)
 
-    Main =
+    main =
         result = self.multiply_with_five([1, 2, 3, 4, 5])
         IO.print(result)
 ";
