@@ -106,6 +106,7 @@ impl<'a> Parser<'a> {
         let mut states = vec![];
 
         while !self.is_match(&[Dedent]) {
+            self.skip_while(&[Endline]);
             if let Some(declaration) = self.declaration()? {
                 match declaration {
                     state @ ClassState { .. } => states.push(state),
@@ -145,7 +146,7 @@ impl<'a> Parser<'a> {
             Ok(Some(ClassState { name, patterns }))
         } else {
             let return_type = if self.is_match(&[Arrow]) {
-                Some(self.expression()?)
+                Some(self.call()?)
             } else {
                 None
             };
@@ -247,12 +248,12 @@ impl<'a> Parser<'a> {
             while !self.is_match(&[Dedent]) {
                 expressions.push(self.expression()?);
 
-                self.consume_endline()?;
+                self.skip_while(&[Endline]);
             }
         } else {
             expressions.push(self.expression()?);
 
-            self.consume_endline()?;
+            self.skip_while(&[Endline]);
         }
 
         let value = expressions.pop().unwrap();
@@ -1509,6 +1510,45 @@ result = [1, 2, 3, 4, 5].map: |i|
                 }
             }
         )
+    }
+
+    #[test]
+    fn test_fullfillied_class() {
+        let source = "
+Program:
+    implementing FiftiestFive
+
+    take_five -> Integer = 5
+
+    multiply_with_five(x: Integer) -> Integer =
+        x * self.take_five
+
+    multiply_with_five(x: List(Integer)) -> List(Integer) =
+        x.map: |i|
+            self.multiply_with_five(i)
+
+    Main =
+        result = self.multiply_with_five([1, 2, 3, 4, 5])
+        IO.print(result)
+";
+
+        let mut parser = initialize_parser(source);
+        parser.parse().unwrap();
+
+        let class = parser.classes.get(&NameIndex(1)).unwrap();
+        assert_eq!(class.name, NameIndex(1));
+        assert_eq!(class.ancestors, vec![NameIndex(2)]);
+
+        // assert_eq!(
+        //     parser.classes.get(&NameIndex(1)),
+        //     Class {
+        //         name: NameIndex(1),
+        //         ancestors: vec![NameIndex(2)],
+        //         states: vec![],
+        //         decorator: String::new(),
+        //         methods: vec![]
+        //     }
+        // );
     }
 
     #[test]
