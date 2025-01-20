@@ -1,6 +1,7 @@
 use crate::NameIndex;
 use crate::Pattern;
 
+#[derive(Debug, PartialEq)]
 pub enum Statement {
     Implementing(NameIndex),
     ClassState {

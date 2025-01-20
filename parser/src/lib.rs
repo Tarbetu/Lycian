@@ -1526,10 +1526,24 @@ Program:
         x.map: |i|
             self.multiply_with_five(i)
 
-    main =
+    Main =
         result = self.multiply_with_five([1, 2, 3, 4, 5])
         IO.print(result)
 ";
+        // Name list:
+        // 0: Main
+        // 1: Program
+        // 2: FiftiestFive
+        // 3: take_five
+        // 4: Integer
+        // 5: multiply_with_five
+        // 6: x
+        // 7: List
+        // 8: map
+        // 9: i
+        // 10: result
+        // 11: IO
+        // 12: print
 
         let mut parser = initialize_parser(source);
         parser.parse().unwrap();
@@ -1537,17 +1551,197 @@ Program:
         let class = parser.classes.get(&NameIndex(1)).unwrap();
         assert_eq!(class.name, NameIndex(1));
         assert_eq!(class.ancestors, vec![NameIndex(2)]);
+        assert_eq!(class.states, vec![]);
+        assert_eq!(class.decorator, String::new());
 
-        // assert_eq!(
-        //     parser.classes.get(&NameIndex(1)),
-        //     Class {
-        //         name: NameIndex(1),
-        //         ancestors: vec![NameIndex(2)],
-        //         states: vec![],
-        //         decorator: String::new(),
-        //         methods: vec![]
-        //     }
-        // );
+        let mut methods = AHashMap::new();
+
+        // take_five method
+        methods.insert(
+            NameIndex(3),
+            vec![Function {
+                name: NameIndex(3),
+                params: vec![],
+                return_type: Some(Expression::Call {
+                    name_id: NameIndex(4),
+                    block: None,
+                    args: vec![],
+                    caller: None,
+                }),
+                environment: Some(AHashMap::new()),
+                body: Expression::Literal(LiteralIndex(0)),
+                decorator: String::new(),
+            }],
+        );
+
+        // multiply_with_five method
+        methods.insert(
+            NameIndex(5),
+            vec![
+                // multiply_with_five(x: Integer)
+                Function {
+                    name: NameIndex(5),
+                    params: vec![Pattern {
+                        name: Some(NameIndex(6)),
+                        value: Some(Expression::Call {
+                            name_id: NameIndex(4),
+                            block: None,
+                            args: vec![],
+                            caller: None,
+                        }),
+                        condition: None,
+                    }],
+                    return_type: Some(Expression::Call {
+                        name_id: NameIndex(4),
+                        block: None,
+                        args: vec![],
+                        caller: None,
+                    }),
+                    environment: Some(AHashMap::new()),
+                    body: Expression::Binary(
+                        Box::new(Expression::Call {
+                            name_id: NameIndex(6),
+                            block: None,
+                            args: vec![],
+                            caller: None,
+                        }),
+                        Operator::Multiply,
+                        Box::new(Expression::Call {
+                            name_id: NameIndex(3),
+                            block: None,
+                            args: vec![],
+                            caller: Some(Box::new(Expression::ClassSelf)),
+                        }),
+                    ),
+                    decorator: String::new(),
+                },
+                // multiply_with_five(x: List(Integer))
+                Function {
+                    name: NameIndex(5),
+                    environment: Some(AHashMap::new()),
+                    decorator: String::new(),
+                    params: vec![Pattern {
+                        name: Some(NameIndex(6)),
+                        value: Some(Expression::Call {
+                            name_id: NameIndex(7),
+                            block: None,
+                            args: vec![Pattern {
+                                name: Some(NameIndex(4)),
+                                value: None,
+                                condition: None,
+                            }],
+                            caller: None,
+                        }),
+                        condition: None,
+                    }],
+                    return_type: Some(Expression::Call {
+                        name_id: NameIndex(7),
+                        block: None,
+                        args: vec![Pattern {
+                            name: None,
+                            value: Some(Expression::Call {
+                                name_id: NameIndex(4),
+                                block: None,
+                                args: vec![],
+                                caller: None,
+                            }),
+                            condition: None,
+                        }],
+                        caller: None,
+                    }),
+                    body: Expression::Block {
+                        value: Box::new(Expression::Call {
+                            name_id: NameIndex(8),
+                            block: Some(Box::new(Expression::Call {
+                                name_id: NameIndex(5),
+                                block: None,
+                                args: vec![Pattern {
+                                    name: Some(NameIndex(9)),
+                                    value: None,
+                                    condition: None,
+                                }],
+                                caller: Some(Box::new(Expression::ClassSelf)),
+                            })),
+                            args: vec![Pattern {
+                                name: None,
+                                value: Some(Expression::Call {
+                                    name_id: NameIndex(9),
+                                    block: None,
+                                    args: vec![],
+                                    caller: None,
+                                }),
+                                condition: None,
+                            }],
+                            caller: Some(Box::new(Expression::Call {
+                                name_id: NameIndex(6),
+                                block: None,
+                                args: vec![],
+                                caller: None,
+                            })),
+                        }),
+                        expressions: vec![],
+                        params: vec![Pattern {
+                            name: Some(NameIndex(8)),
+                            value: None,
+                            condition: None,
+                        }],
+                    },
+                },
+            ],
+        );
+
+        let mut main_environment = AHashMap::new();
+        main_environment.insert(
+            NameIndex(9),
+            vec![Function {
+                name: NameIndex(9),
+                params: vec![],
+                return_type: None,
+                environment: None,
+                decorator: String::new(),
+                body: Expression::Call {
+                    name_id: NameIndex(5),
+                    caller: Some(Box::new(Expression::ClassSelf)),
+                    args: vec![Pattern {
+                        name: None,
+                        value: Some(Expression::Literal(LiteralIndex(1))),
+                        condition: None,
+                    }],
+                    block: None,
+                },
+            }],
+        );
+
+        methods.insert(
+            NameIndex(0),
+            vec![Function {
+                name: NameIndex(0),
+                params: vec![],
+                return_type: None,
+                environment: Some(main_environment),
+                body: Expression::Block {
+                    value: Box::new(Expression::Call {
+                        name_id: NameIndex(11),
+                        block: None,
+                        args: vec![Pattern {
+                            name: None,
+                            value: Some(Expression::Call {
+                                caller: None,
+                                name_id: NameIndex(9),
+                                args: vec![],
+                                block: None,
+                            }),
+                            condition: None,
+                        }],
+                        caller: Some(Box::new(Expression::ClassSelf)),
+                    }),
+                    expressions: vec![Expression::Function(NameIndex(9))],
+                    params: vec![],
+                },
+                decorator: String::new(),
+            }],
+        );
+        assert_eq!(class.methods, methods);
     }
 
     #[test]
