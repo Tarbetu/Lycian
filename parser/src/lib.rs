@@ -982,6 +982,15 @@ mod tests {
         rug::Float::with_val(literal::PRECISION, number)
     }
 
+    fn create_simple_call(call: Name, names: &BiHashMap<NameIndex, Name>) -> Expression {
+        Expression::Call {
+            name_id: *names.get_by_right(&call).unwrap(),
+            block: None,
+            args: vec![],
+            caller: None,
+        }
+    }
+
     #[test]
     fn parse_simple_class() {
         let source = "
@@ -1512,6 +1521,82 @@ result = [1, 2, 3, 4, 5].map: |i|
     }
 
     #[test]
+    fn test_simple_class() {
+        let source = "
+Program:
+    multiply_with_five(x: List(Integer)) -> List(Integer) =
+        x.map: |i|
+            self.multiply_with_five(i)
+";
+        let mut parser = initialize_parser(source);
+        parser.parse().unwrap();
+
+        let class = parser.classes.get(&NameIndex(1)).unwrap();
+
+        let mut methods = AHashMap::new();
+        methods.insert(
+            NameIndex(2),
+            vec![Function {
+                name: NameIndex(2),
+                environment: Some(AHashMap::new()),
+                decorator: String::new(),
+                params: vec![Pattern {
+                    name: Some(NameIndex(3)),
+                    value: Some(Expression::Call {
+                        name_id: NameIndex(4),
+                        block: None,
+                        args: vec![Pattern {
+                            name: Some(NameIndex(5)),
+                            value: None,
+                            condition: None,
+                        }],
+                        caller: None,
+                    }),
+                    condition: None,
+                }],
+                return_type: Some(Expression::Call {
+                    name_id: NameIndex(4),
+                    block: None,
+                    args: vec![Pattern {
+                        name: Some(NameIndex(5)),
+                        value: None,
+                        condition: None,
+                    }],
+                    caller: None,
+                }),
+                body: Expression::Call {
+                    name_id: NameIndex(6),
+                    caller: Some(Box::new(create_simple_call(
+                        Name::Protected("x".to_string()),
+                        &parser.names,
+                    ))),
+                    args: vec![],
+                    block: Some(Box::new(Expression::Block {
+                        expressions: vec![],
+                        params: vec![Pattern {
+                            name: Some(NameIndex(7)),
+                            value: None,
+                            condition: None,
+                        }],
+                        value: Box::new(Expression::Call {
+                            caller: Some(Box::new(Expression::ClassSelf)),
+                            name_id: NameIndex(2),
+                            block: None,
+                            args: vec![Pattern {
+                                name: Some(NameIndex(7)),
+                                value: None,
+                                condition: None,
+                            }],
+                        }),
+                    })),
+                },
+            }],
+        );
+
+        assert_eq!(class.methods, methods)
+    }
+
+    #[test]
     fn test_fullfillied_class() {
         let source = "
 Program:
@@ -1562,12 +1647,10 @@ Program:
             vec![Function {
                 name: NameIndex(3),
                 params: vec![],
-                return_type: Some(Expression::Call {
-                    name_id: NameIndex(4),
-                    block: None,
-                    args: vec![],
-                    caller: None,
-                }),
+                return_type: Some(create_simple_call(
+                    Name::Public("Integer".to_string()),
+                    &parser.names,
+                )),
                 environment: Some(AHashMap::new()),
                 body: Expression::Literal(LiteralIndex(0)),
                 decorator: String::new(),
@@ -1583,28 +1666,22 @@ Program:
                     name: NameIndex(5),
                     params: vec![Pattern {
                         name: Some(NameIndex(6)),
-                        value: Some(Expression::Call {
-                            name_id: NameIndex(4),
-                            block: None,
-                            args: vec![],
-                            caller: None,
-                        }),
+                        value: Some(create_simple_call(
+                            Name::Public("Integer".to_string()),
+                            &parser.names,
+                        )),
                         condition: None,
                     }],
-                    return_type: Some(Expression::Call {
-                        name_id: NameIndex(4),
-                        block: None,
-                        args: vec![],
-                        caller: None,
-                    }),
+                    return_type: Some(create_simple_call(
+                        Name::Public("Integer".to_string()),
+                        &parser.names,
+                    )),
                     environment: Some(AHashMap::new()),
                     body: Expression::Binary(
-                        Box::new(Expression::Call {
-                            name_id: NameIndex(6),
-                            block: None,
-                            args: vec![],
-                            caller: None,
-                        }),
+                        Box::new(create_simple_call(
+                            Name::Protected("x".to_string()),
+                            &parser.names,
+                        )),
                         Operator::Multiply,
                         Box::new(Expression::Call {
                             name_id: NameIndex(3),
@@ -1638,21 +1715,22 @@ Program:
                         name_id: NameIndex(7),
                         block: None,
                         args: vec![Pattern {
-                            name: None,
-                            value: Some(Expression::Call {
-                                name_id: NameIndex(4),
-                                block: None,
-                                args: vec![],
-                                caller: None,
-                            }),
+                            name: Some(NameIndex(4)),
+                            value: None,
                             condition: None,
                         }],
                         caller: None,
                     }),
-                    body: Expression::Block {
-                        value: Box::new(Expression::Call {
-                            name_id: NameIndex(8),
-                            block: Some(Box::new(Expression::Call {
+                    body: Expression::Call {
+                        name_id: NameIndex(8),
+                        block: Some(Box::new(Expression::Block {
+                            expressions: vec![],
+                            params: vec![Pattern {
+                                name: Some(NameIndex(9)),
+                                value: None,
+                                condition: None,
+                            }],
+                            value: Box::new(Expression::Call {
                                 name_id: NameIndex(5),
                                 block: None,
                                 args: vec![Pattern {
@@ -1661,30 +1739,15 @@ Program:
                                     condition: None,
                                 }],
                                 caller: Some(Box::new(Expression::ClassSelf)),
-                            })),
-                            args: vec![Pattern {
-                                name: None,
-                                value: Some(Expression::Call {
-                                    name_id: NameIndex(9),
-                                    block: None,
-                                    args: vec![],
-                                    caller: None,
-                                }),
-                                condition: None,
-                            }],
-                            caller: Some(Box::new(Expression::Call {
-                                name_id: NameIndex(6),
-                                block: None,
-                                args: vec![],
-                                caller: None,
-                            })),
-                        }),
-                        expressions: vec![],
-                        params: vec![Pattern {
-                            name: Some(NameIndex(8)),
-                            value: None,
-                            condition: None,
-                        }],
+                            }),
+                        })),
+                        args: vec![],
+                        caller: Some(Box::new(Expression::Call {
+                            name_id: NameIndex(6),
+                            block: None,
+                            args: vec![],
+                            caller: None,
+                        })),
                     },
                 },
             ],
@@ -1692,9 +1755,9 @@ Program:
 
         let mut main_environment = AHashMap::new();
         main_environment.insert(
-            NameIndex(9),
+            NameIndex(10),
             vec![Function {
-                name: NameIndex(9),
+                name: NameIndex(10),
                 params: vec![],
                 return_type: None,
                 environment: None,
@@ -1721,21 +1784,19 @@ Program:
                 environment: Some(main_environment),
                 body: Expression::Block {
                     value: Box::new(Expression::Call {
-                        name_id: NameIndex(11),
+                        name_id: NameIndex(12),
                         block: None,
                         args: vec![Pattern {
-                            name: None,
-                            value: Some(Expression::Call {
-                                caller: None,
-                                name_id: NameIndex(9),
-                                args: vec![],
-                                block: None,
-                            }),
+                            name: Some(NameIndex(10)),
+                            value: None,
                             condition: None,
                         }],
-                        caller: Some(Box::new(Expression::ClassSelf)),
+                        caller: Some(Box::new(create_simple_call(
+                            Name::Public("IO".to_string()),
+                            &parser.names,
+                        ))),
                     }),
-                    expressions: vec![Expression::Function(NameIndex(9))],
+                    expressions: vec![Expression::Function(NameIndex(10))],
                     params: vec![],
                 },
                 decorator: String::new(),
