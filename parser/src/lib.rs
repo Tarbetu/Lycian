@@ -146,7 +146,7 @@ impl<'a> Parser<'a> {
             Ok(Some(ClassState { name, patterns }))
         } else {
             let return_type = if self.is_match(&[Arrow]) {
-                Some(self.call()?)
+                Some(self.or()?)
             } else {
                 None
             };
@@ -194,18 +194,18 @@ impl<'a> Parser<'a> {
             let name = self.push_name(&self.previous());
 
             if self.is_match(&[Colon]) {
-                let value = self.expression()?;
+                let value = self.or()?;
 
                 (Some(name), Some(value))
             } else {
                 (Some(name), None)
             }
         } else {
-            (None, Some(self.expression()?))
+            (None, Some(self.or()?))
         };
 
         let condition = if self.is_match(&[When]) {
-            Some(self.expression()?)
+            Some(self.or()?)
         } else {
             None
         };
@@ -287,7 +287,7 @@ impl<'a> Parser<'a> {
         };
 
         let return_type = if self.is_match(&[Arrow]) {
-            Some(self.expression()?)
+            Some(self.or()?)
         } else {
             None
         };
@@ -327,6 +327,7 @@ impl<'a> Parser<'a> {
         if self.is_match(&[Match]) {
             let scrutinee = self.expression()?;
 
+            self.consume_endline()?;
             self.consume(Indent, "Indendation start")?;
 
             let arms = {
@@ -982,7 +983,7 @@ mod tests {
         rug::Float::with_val(literal::PRECISION, number)
     }
 
-    fn create_simple_call(call: Name, names: &BiHashMap<NameIndex, Name>) -> Expression {
+    fn simple_call(call: Name, names: &BiHashMap<NameIndex, Name>) -> Expression {
         Expression::Call {
             name_id: *names.get_by_right(&call).unwrap(),
             block: None,
@@ -1566,7 +1567,7 @@ Program:
                 }),
                 body: Expression::Call {
                     name_id: NameIndex(6),
-                    caller: Some(Box::new(create_simple_call(
+                    caller: Some(Box::new(simple_call(
                         Name::Protected("x".to_string()),
                         &parser.names,
                     ))),
@@ -1647,7 +1648,7 @@ Program:
             vec![Function {
                 name: NameIndex(3),
                 params: vec![],
-                return_type: Some(create_simple_call(
+                return_type: Some(simple_call(
                     Name::Public("Integer".to_string()),
                     &parser.names,
                 )),
@@ -1666,22 +1667,19 @@ Program:
                     name: NameIndex(5),
                     params: vec![Pattern {
                         name: Some(NameIndex(6)),
-                        value: Some(create_simple_call(
+                        value: Some(simple_call(
                             Name::Public("Integer".to_string()),
                             &parser.names,
                         )),
                         condition: None,
                     }],
-                    return_type: Some(create_simple_call(
+                    return_type: Some(simple_call(
                         Name::Public("Integer".to_string()),
                         &parser.names,
                     )),
                     environment: Some(AHashMap::new()),
                     body: Expression::Binary(
-                        Box::new(create_simple_call(
-                            Name::Protected("x".to_string()),
-                            &parser.names,
-                        )),
+                        Box::new(simple_call(Name::Protected("x".to_string()), &parser.names)),
                         Operator::Multiply,
                         Box::new(Expression::Call {
                             name_id: NameIndex(3),
@@ -1791,7 +1789,7 @@ Program:
                             value: None,
                             condition: None,
                         }],
-                        caller: Some(Box::new(create_simple_call(
+                        caller: Some(Box::new(simple_call(
                             Name::Public("IO".to_string()),
                             &parser.names,
                         ))),
@@ -1812,5 +1810,43 @@ Program:
         let mut parser = initialize_parser("==");
 
         assert!(parser.is_match(&[Equal, EqualEqual]));
+    }
+
+    #[test]
+    fn parse_match_expr() {
+        use Expression::Match;
+        let source = "
+match x
+    42 -> 42
+    Integer -> 69
+";
+
+        let mut parser = initialize_parser(source);
+        let result = parser.expression().unwrap();
+
+        assert_eq!(
+            result,
+            Match {
+                scrutinee: Box::new(simple_call(Name::Protected("x".to_string()), &parser.names)),
+                arms: vec![
+                    (
+                        Pattern {
+                            name: None,
+                            value: Some(Expression::Literal(LiteralIndex(0))),
+                            condition: None,
+                        },
+                        Expression::Literal(LiteralIndex(1)),
+                    ),
+                    (
+                        Pattern {
+                            name: Some(NameIndex(2)),
+                            value: None,
+                            condition: None,
+                        },
+                        Expression::Literal(LiteralIndex(2)),
+                    ),
+                ],
+            },
+        )
     }
 }
