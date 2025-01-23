@@ -8,15 +8,18 @@ mod operator;
 mod pattern;
 mod statement;
 
+extern crate scopeguard;
+
 use std::mem::swap;
 
 pub use crate::literal::*;
 use class::Class;
 pub use expression::Expression;
+pub use scopeguard::guard;
 pub use statement::Statement;
 
 pub use function::Function;
-pub use pattern::Pattern;
+pub use pattern::*;
 
 pub use newtypes::*;
 
@@ -39,6 +42,7 @@ pub struct Parser<'a> {
     position: usize,
     current_methods: AHashMap<NameIndex, Vec<Function>>,
     current_environment: AHashMap<NameIndex, Vec<Function>>,
+    block_and_return_type_expected: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -52,6 +56,7 @@ impl<'a> Parser<'a> {
             current_methods: AHashMap::new(),
             current_environment: AHashMap::new(),
             literals: AHashMap::new(),
+            block_and_return_type_expected: true,
         }
     }
 
@@ -137,7 +142,7 @@ impl<'a> Parser<'a> {
         let name = self.consume_name()?;
 
         let patterns = if self.is_match(&[ParenOpen]) {
-            self.pattern_list(ParenClose, "Closing Paranthesis")?
+            self.pattern_list(ParenClose, "Closing Paranthesis", PatternType::Parameter)?
         } else {
             vec![]
         };
@@ -167,15 +172,16 @@ impl<'a> Parser<'a> {
         &mut self,
         end_with: TokenType,
         expected: &'static str,
+        pattern_type: PatternType,
     ) -> ParserResult<Vec<Pattern>> {
         use TokenType::{Comma, Endline};
 
         let mut patterns = Vec::new();
 
-        patterns.push(self.pattern()?);
+        patterns.push(self.pattern(pattern_type)?);
 
         while self.is_match(&[Comma, Endline]) {
-            patterns.push(self.pattern()?);
+            patterns.push(self.pattern(pattern_type)?);
         }
 
         self.consume(end_with, expected)?;
@@ -187,28 +193,38 @@ impl<'a> Parser<'a> {
         Ok(patterns)
     }
 
-    fn pattern(&mut self) -> ParserResult<Pattern> {
+    fn pattern(&mut self, pattern_type: PatternType) -> ParserResult<Pattern> {
+        use Expression::Call;
         use TokenType::*;
+        let block_and_return_type_expected_before = self.block_and_return_type_expected;
+        let mut parser = guard(self, |parser| {
+            parser.block_and_return_type_expected = block_and_return_type_expected_before
+        });
 
-        let (name, value) = if self.is_match(&[Wildcard, Identifier, Constant]) {
-            let name = self.push_name(&self.previous());
+        let name_expr = parser.expression()?;
 
-            if self.is_match(&[Colon]) {
-                let value = self.or()?;
-
-                (Some(name), Some(value))
-            } else {
-                (Some(name), None)
-            }
-        } else {
-            (None, Some(self.or()?))
-        };
-
-        let condition = if self.is_match(&[When]) {
-            Some(self.or()?)
+        let mut name = if let Call { name_id, .. } = name_expr {
+            Some(name_id)
         } else {
             None
         };
+
+        let mut value = if parser.is_match(&[Colon]) {
+            Some(parser.expression()?)
+        } else {
+            None
+        };
+
+        let condition = if parser.is_match(&[When]) {
+            Some(parser.or()?)
+        } else {
+            None
+        };
+
+        if value.is_none() && pattern_type == PatternType::Argument {
+            value = Some(name_expr);
+            name = None;
+        }
 
         Ok(Pattern {
             name,
@@ -225,7 +241,7 @@ impl<'a> Parser<'a> {
         use TokenType::{Dedent, Endline, Indent, Pipe};
 
         let params = if self.is_match(&[Pipe]) {
-            self.pattern_list(Pipe, "| symbol")?
+            self.pattern_list(Pipe, "| symbol", PatternType::Parameter)?
         } else {
             vec![]
         };
@@ -281,12 +297,12 @@ impl<'a> Parser<'a> {
         let name_token = self.peek();
         let mut expr = self.lambda()?;
         let params = if self.is_match(&[ParenOpen]) {
-            self.pattern_list(ParenClose, "Closing Paranthesis")?
+            self.pattern_list(ParenClose, "Closing Paranthesis", PatternType::Parameter)?
         } else {
             vec![]
         };
 
-        let return_type = if self.is_match(&[Arrow]) {
+        let return_type = if self.block_and_return_type_expected && self.is_match(&[Arrow]) {
             Some(self.or()?)
         } else {
             None
@@ -309,7 +325,7 @@ impl<'a> Parser<'a> {
         use TokenType::Pipe;
 
         if self.is_match(&[Pipe]) {
-            let params = self.pattern_list(Pipe, "| symbol")?;
+            let params = self.pattern_list(Pipe, "| symbol", PatternType::Parameter)?;
             let expr = self.expression()?;
 
             Ok(Expression::Block {
@@ -323,23 +339,30 @@ impl<'a> Parser<'a> {
     }
 
     fn match_expr(&mut self) -> ParserResult<Expression> {
-        use TokenType::{Arrow, Dedent, Endline, Indent, Match};
+        use TokenType::{Arrow, Colon, Dedent, Endline, Indent, Match};
         if self.is_match(&[Match]) {
-            let scrutinee = self.expression()?;
+            let block_and_return_type_expected_before = self.block_and_return_type_expected;
+            self.block_and_return_type_expected = false;
+            let mut parser = guard(self, |parser| {
+                parser.block_and_return_type_expected = block_and_return_type_expected_before
+            });
+            dbg!(parser.block_and_return_type_expected);
+            let scrutinee = parser.expression()?;
 
-            self.consume_endline()?;
-            self.consume(Indent, "Indendation start")?;
+            parser.consume(Colon, ": symbol")?;
+            parser.consume_endline()?;
+            parser.consume(Indent, "Indendation start")?;
 
             let arms = {
                 let mut arms = vec![];
 
-                while !self.is_match(&[Dedent]) {
-                    self.skip_while(&[Endline]);
-                    let pattern = self.pattern()?;
+                while !parser.is_match(&[Dedent]) {
+                    parser.skip_while(&[Endline]);
+                    let pattern = parser.pattern(PatternType::Argument)?;
 
-                    self.consume(Arrow, "Arrow")?;
+                    parser.consume(Arrow, "Arrow")?;
 
-                    let expr = self.block(true, None)?;
+                    let expr = parser.block(true, None)?;
 
                     arms.push((pattern, expr));
                 }
@@ -494,7 +517,7 @@ impl<'a> Parser<'a> {
                 let args = if self.is_match(&[ParenClose]) {
                     vec![]
                 } else {
-                    self.pattern_list(ParenClose, "Closing Paranthesis")?
+                    self.pattern_list(ParenClose, "Closing Paranthesis", PatternType::Argument)?
                 };
 
                 expr = match expr {
@@ -530,7 +553,7 @@ impl<'a> Parser<'a> {
                     block: None,
                 };
             } else {
-                if self.is_match(&[Colon]) {
+                if self.block_and_return_type_expected && self.is_match(&[Colon]) {
                     let block = Some(Box::new(self.block(true, None)?));
 
                     match expr {
@@ -1522,7 +1545,7 @@ result = [1, 2, 3, 4, 5].map: |i|
     }
 
     #[test]
-    fn test_simple_class() {
+    fn test_class_with_method() {
         let source = "
 Program:
     multiply_with_five(x: List(Integer)) -> List(Integer) =
@@ -1816,7 +1839,7 @@ Program:
     fn parse_match_expr() {
         use Expression::Match;
         let source = "
-match x
+match x:
     42 -> 42
     Integer -> 69
 ";
@@ -1839,8 +1862,11 @@ match x
                     ),
                     (
                         Pattern {
-                            name: Some(NameIndex(2)),
-                            value: None,
+                            name: None,
+                            value: Some(simple_call(
+                                Name::Public("Integer".to_string()),
+                                &parser.names
+                            )),
                             condition: None,
                         },
                         Expression::Literal(LiteralIndex(2)),
@@ -1848,5 +1874,97 @@ match x
                 ],
             },
         )
+    }
+
+    #[test]
+    fn parse_match_expr_with_condition_and_value() {
+        use Expression::{Binary, Match};
+        let source = "
+match x:
+    number: Integer when number > 0 -> 42
+    something when something == 0 -> 69
+    call_me_maybe: Option.Some(Integer) -> 420
+    _ -> 69
+";
+
+        let mut parser = initialize_parser(source);
+        let result = parser.expression().unwrap();
+
+        assert_eq!(
+            result,
+            Match {
+                scrutinee: Box::new(simple_call(Name::Protected("x".to_string()), &parser.names)),
+                arms: vec![
+                    (
+                        Pattern {
+                            name: Some(NameIndex(2)),
+                            value: Some(simple_call(
+                                Name::Public("Integer".to_string()),
+                                &parser.names
+                            )),
+                            condition: Some(Binary(
+                                Box::new(simple_call(
+                                    Name::Protected("number".to_string()),
+                                    &parser.names
+                                )),
+                                Operator::Greater,
+                                Box::new(Expression::Literal(LiteralIndex(0)))
+                            )),
+                        },
+                        Expression::Literal(LiteralIndex(1))
+                    ),
+                    (
+                        Pattern {
+                            name: Some(NameIndex(4)),
+                            value: None,
+                            condition: Some(Binary(
+                                Box::new(simple_call(
+                                    Name::Protected("something".to_string()),
+                                    &parser.names
+                                )),
+                                Operator::Equal,
+                                Box::new(Expression::Literal(LiteralIndex(2)))
+                            )),
+                        },
+                        Expression::Literal(LiteralIndex(3))
+                    ),
+                    (
+                        Pattern {
+                            name: Some(NameIndex(5)),
+                            value: Some(Expression::Call {
+                                name_id: NameIndex(7),
+                                block: None,
+                                args: vec![Pattern {
+                                    // Test fails in here.
+                                    // Integer as a param name instead of value? This sound wrong.
+                                    // Value should represent the type here.
+                                    // Check self.pattern function
+                                    name: None,
+                                    value: Some(simple_call(
+                                        Name::Public("Integer".to_string()),
+                                        &parser.names
+                                    )),
+                                    condition: None,
+                                }],
+                                caller: Some(Box::new(simple_call(
+                                    Name::Public("Option".to_string()),
+                                    &parser.names
+                                ))),
+                            }),
+                            condition: None,
+                        },
+                        Expression::Literal(LiteralIndex(4))
+                    ),
+                    (
+                        Pattern {
+                            name: Some(NameIndex(8)),
+                            value: None,
+                            condition: None
+                        },
+                        Expression::Literal(LiteralIndex(5))
+                    )
+                ]
+            }
+        );
     }
 }

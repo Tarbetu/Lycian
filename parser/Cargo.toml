@@ -10,4 +10,5 @@ bimap = "0.6.3"
 either = "1.13.0"
 rug = "1.26.1"
 scanner = { path = "../scanner" }
+scopeguard = "1.2.0"
 unicode-segmentation = "1.12.0"
