@@ -33,6 +33,18 @@ use ahash::AHashMap;
 use bimap::BiHashMap;
 use either::Either;
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum ParsingMode {
+    /// -> symbol will be parsed as function return type
+    /// : symbol will be parsed as start of call block
+    Normal,
+    // -> symbol will be interpreted as match arm
+    // : symbol will be interpreted as:
+    //   start of match block,
+    //   and name of pattern
+    Pattern,
+}
+
 pub struct Parser<'a> {
     pub names: BiHashMap<NameIndex, Name>,
     pub literals: AHashMap<LiteralIndex, Literal>,
@@ -42,7 +54,7 @@ pub struct Parser<'a> {
     position: usize,
     current_methods: AHashMap<NameIndex, Vec<Function>>,
     current_environment: AHashMap<NameIndex, Vec<Function>>,
-    block_and_return_type_expected: bool,
+    parsing_mode: ParsingMode,
 }
 
 impl<'a> Parser<'a> {
@@ -56,7 +68,7 @@ impl<'a> Parser<'a> {
             current_methods: AHashMap::new(),
             current_environment: AHashMap::new(),
             literals: AHashMap::new(),
-            block_and_return_type_expected: true,
+            parsing_mode: ParsingMode::Normal,
         }
     }
 
@@ -196,10 +208,8 @@ impl<'a> Parser<'a> {
     fn pattern(&mut self, pattern_type: PatternType) -> ParserResult<Pattern> {
         use Expression::Call;
         use TokenType::*;
-        let block_and_return_type_expected_before = self.block_and_return_type_expected;
-        let mut parser = guard(self, |parser| {
-            parser.block_and_return_type_expected = block_and_return_type_expected_before
-        });
+        let parsing_mode_before = self.parsing_mode;
+        let mut parser = guard(self, |parser| parser.parsing_mode = parsing_mode_before);
 
         let name_expr = parser.expression()?;
 
@@ -302,7 +312,7 @@ impl<'a> Parser<'a> {
             vec![]
         };
 
-        let return_type = if self.block_and_return_type_expected && self.is_match(&[Arrow]) {
+        let return_type = if self.parsing_mode == ParsingMode::Normal && self.is_match(&[Arrow]) {
             Some(self.or()?)
         } else {
             None
@@ -341,12 +351,10 @@ impl<'a> Parser<'a> {
     fn match_expr(&mut self) -> ParserResult<Expression> {
         use TokenType::{Arrow, Colon, Dedent, Endline, Indent, Match};
         if self.is_match(&[Match]) {
-            let block_and_return_type_expected_before = self.block_and_return_type_expected;
-            self.block_and_return_type_expected = false;
-            let mut parser = guard(self, |parser| {
-                parser.block_and_return_type_expected = block_and_return_type_expected_before
-            });
-            dbg!(parser.block_and_return_type_expected);
+            let parsing_mode_before = self.parsing_mode;
+            self.parsing_mode = ParsingMode::Pattern;
+            let mut parser = guard(self, |parser| parser.parsing_mode = parsing_mode_before);
+            dbg!(parser.parsing_mode);
             let scrutinee = parser.expression()?;
 
             parser.consume(Colon, ": symbol")?;
@@ -553,7 +561,7 @@ impl<'a> Parser<'a> {
                     block: None,
                 };
             } else {
-                if self.block_and_return_type_expected && self.is_match(&[Colon]) {
+                if self.parsing_mode == ParsingMode::Normal && self.is_match(&[Colon]) {
                     let block = Some(Box::new(self.block(true, None)?));
 
                     match expr {
