@@ -209,6 +209,7 @@ impl<'a> Parser<'a> {
         use Expression::Call;
         use TokenType::*;
         let parsing_mode_before = self.parsing_mode;
+        self.parsing_mode = ParsingMode::Pattern;
         let mut parser = guard(self, |parser| parser.parsing_mode = parsing_mode_before);
 
         let first_expr = parser.expression()?;
@@ -226,10 +227,10 @@ impl<'a> Parser<'a> {
                 }
             };
 
-            // Value/tip kısmını parse et
+            // Parsing value
             let value = Some(parser.expression()?);
 
-            // When condition varsa parse et
+            // Parsing condition
             let condition = if parser.is_match(&[When]) {
                 Some(parser.or()?)
             } else {
@@ -242,28 +243,36 @@ impl<'a> Parser<'a> {
                 condition,
             })
         } else {
-            // Only name or value
-            if pattern_type == PatternType::Argument {
-                // Argüman durumunda direkt değer olarak al
-                Ok(Pattern {
-                    name: None,
-                    value: Some(first_expr),
-                    condition: None,
-                })
+            let condition = if parser.is_match(&[When]) {
+                Some(parser.or()?)
             } else {
-                // Parametre durumunda isim olarak al
-                match first_expr {
-                    Call { name_id, .. } => Ok(Pattern {
-                        name: Some(name_id),
-                        value: None,
-                        condition: None,
-                    }),
-                    _ => Err(ParserError::UnexpectedToken {
-                        expected: "Name",
-                        found: parser.previous().kind,
-                        line: Some(parser.previous().line),
-                    }),
-                }
+                None
+            };
+
+            match (pattern_type, first_expr) {
+                (PatternType::Argument, expr) => Ok(Pattern {
+                    name: None,
+                    value: Some(expr),
+                    condition,
+                }),
+                (
+                    PatternType::Parameter,
+                    Call {
+                        name_id,
+                        caller: None,
+                        block: None,
+                        args,
+                    },
+                ) if args.is_empty() => Ok(Pattern {
+                    name: Some(name_id),
+                    value: None,
+                    condition,
+                }),
+                _ => Err(ParserError::UnexpectedToken {
+                    expected: "Name",
+                    found: parser.previous().kind,
+                    line: Some(parser.previous().line),
+                }),
             }
         }
     }
