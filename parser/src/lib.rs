@@ -154,7 +154,7 @@ impl<'a> Parser<'a> {
         let name = self.consume_name()?;
 
         let patterns = if self.is_match(&[ParenOpen]) {
-            self.pattern_list(ParenClose, "Closing Paranthesis", PatternType::Parameter)?
+            self.pattern_list(ParenClose, "Closing Paranthesis", PatternType::Argument)?
         } else {
             vec![]
         };
@@ -388,7 +388,6 @@ impl<'a> Parser<'a> {
             let parsing_mode_before = self.parsing_mode;
             self.parsing_mode = ParsingMode::Pattern;
             let mut parser = guard(self, |parser| parser.parsing_mode = parsing_mode_before);
-            dbg!(parser.parsing_mode);
             let scrutinee = parser.expression()?;
 
             parser.consume(Colon, ": symbol")?;
@@ -2227,5 +2226,218 @@ Program:
                 line: Some(3)
             }
         )
+    }
+
+    #[test]
+    fn test_basic_state_declarations() {
+        let source = "
+Connection:
+    Connected
+    Disconnected
+    Error(String)
+    DetailedError(code: Integer, message: String)
+";
+
+        let mut parser = initialize_parser(source);
+        parser.parse().unwrap();
+
+        let expected_states = vec![
+            Statement::ClassState {
+                name: NameIndex(2), // Connected
+                patterns: vec![],
+            },
+            Statement::ClassState {
+                name: NameIndex(3), // Disconnected
+                patterns: vec![],
+            },
+            Statement::ClassState {
+                name: NameIndex(4), // Error
+                patterns: vec![Pattern {
+                    name: None,
+                    value: Some(simple_call(
+                        Name::Public("String".to_string()),
+                        &parser.names,
+                    )),
+                    condition: None,
+                }],
+            },
+            Statement::ClassState {
+                name: NameIndex(6), // DetailedError
+                patterns: vec![
+                    Pattern {
+                        name: Some(NameIndex(7)), // code
+                        value: Some(simple_call(
+                            Name::Public("Integer".to_string()),
+                            &parser.names,
+                        )),
+                        condition: None,
+                    },
+                    Pattern {
+                        name: Some(NameIndex(9)), // message
+                        value: Some(simple_call(
+                            Name::Public("String".to_string()),
+                            &parser.names,
+                        )),
+                        condition: None,
+                    },
+                ],
+            },
+        ];
+
+        assert_eq!(
+            parser.classes.get(&NameIndex(1)).unwrap().states,
+            expected_states
+        );
+    }
+
+    #[test]
+    fn test_state_with_methods() {
+        use Expression::{Block, Call, ClassSelf, Match};
+        let source = r#"
+Connection:
+    Connected(socket: Socket)
+    Disconnected
+
+    disconnect -> Disconnected = 
+        match self:
+            Connected(socket) ->
+                socket.close
+                Disconnected
+            Disconnected -> Disconnected
+
+    connect(socket: Socket) -> Connected =
+        Connected(socket)
+"#;
+
+        let mut parser = initialize_parser(source);
+        parser.parse().unwrap();
+        let class = parser.classes.get(&NameIndex(1)).unwrap();
+
+        let methods = &class.methods;
+        let disconnect_method = &methods.get(&NameIndex(6)).unwrap()[0]; // disconnect
+        let connect_method = &methods.get(&NameIndex(8)).unwrap()[0]; // connect
+
+        assert_eq!(
+            disconnect_method.body,
+            Match {
+                scrutinee: Box::new(ClassSelf),
+                arms: vec![
+                    (
+                        Pattern {
+                            name: None,
+                            value: Some(Call {
+                                name_id: NameIndex(2),
+                                caller: None,
+                                block: None,
+                                args: vec![Pattern {
+                                    name: None,
+                                    value: Some(simple_call(
+                                        Name::Protected("socket".to_string()),
+                                        &parser.names
+                                    )),
+                                    condition: None
+                                }]
+                            }),
+                            condition: None
+                        },
+                        Block {
+                            expressions: vec![Call {
+                                name_id: NameIndex(7),
+                                caller: Some(Box::new(simple_call(
+                                    Name::Protected("socket".to_string()),
+                                    &parser.names
+                                ))),
+                                args: vec![],
+                                block: None
+                            }],
+                            value: Box::new(simple_call(
+                                Name::Public("Disconnected".to_string()),
+                                &parser.names
+                            )),
+                            params: vec![]
+                        }
+                    ),
+                    (
+                        Pattern {
+                            name: None,
+                            value: Some(simple_call(
+                                Name::Public("Disconnected".to_string()),
+                                &parser.names
+                            )),
+                            condition: None
+                        },
+                        simple_call(Name::Public("Disconnected".to_string()), &parser.names)
+                    )
+                ]
+            }
+        );
+
+        assert_eq!(
+            connect_method.body,
+            Call {
+                name_id: NameIndex(2),
+                caller: None,
+                block: None,
+                args: vec![Pattern {
+                    name: None,
+                    value: Some(simple_call(
+                        Name::Protected("socket".to_string()),
+                        &parser.names
+                    )),
+                    condition: None
+                }]
+            }
+        );
+
+        assert_eq!(
+            connect_method.params[0],
+            Pattern {
+                name: Some(NameIndex(3)),
+                value: Some(simple_call(
+                    Name::Public("Socket".to_string()),
+                    &parser.names
+                )),
+                condition: None
+            }
+        );
+
+        assert_eq!(
+            disconnect_method.return_type,
+            Some(simple_call(
+                Name::Public("Disconnected".to_string()),
+                &parser.names
+            ))
+        );
+
+        assert_eq!(
+            connect_method.return_type,
+            Some(simple_call(
+                Name::Public("Connected".to_string()),
+                &parser.names
+            ))
+        );
+    }
+
+    #[test]
+    fn test_state_with_inline_methods() {
+        let source = r#"
+Counter:
+    Active(count: Integer)
+    Inactive
+
+    increment -> Active = Active(self.count + 1)
+    reset -> Inactive = Inactive()
+    start -> Active = Active(count)
+"#;
+
+        let mut parser = initialize_parser(source);
+        parser.parse().unwrap();
+        let class = parser.classes.get(&NameIndex(1)).unwrap();
+
+        // Be sure about method definitions are true
+        let methods = &class.methods;
+        assert!(methods.contains_key(&NameIndex(6))); // increment
+        assert!(methods.contains_key(&NameIndex(7))); // reset
+        assert!(methods.contains_key(&NameIndex(8))); // start
     }
 }
