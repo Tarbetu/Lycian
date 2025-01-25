@@ -2476,4 +2476,24 @@ Calculator:
             Some(Expression::Literal(LiteralIndex(4)))
         );
     }
+
+    #[test]
+    fn test_empty_file() {
+        let source = "";
+        let mut parser = initialize_parser(source);
+        let result = parser.parse();
+
+        assert!(result.is_ok());
+        assert!(parser.classes.is_empty());
+    }
+
+    #[test]
+    fn test_only_comments() {
+        let source = "# This is a comment";
+        let mut parser = initialize_parser(source);
+        let result = parser.parse();
+
+        assert!(result.is_ok());
+        assert!(parser.classes.is_empty());
+    }
 }
