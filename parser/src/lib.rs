@@ -2033,4 +2033,199 @@ match x:
             }
         );
     }
+
+    #[test]
+    fn test_missing_expression_after_function() {
+        let source = "
+Program:
+    x =
+";
+        let mut parser = initialize_parser(source);
+        let result = parser.parse().unwrap_err();
+
+        assert_eq!(
+            result,
+            ParserError::UnexpectedToken {
+                expected: "Expression",
+                found: TokenType::Dedent,
+                line: Some(4)
+            }
+        )
+    }
+
+    #[test]
+    fn test_invalid_arrow() {
+        let source = "
+Program:
+    x = ->
+";
+        let mut parser = initialize_parser(source);
+        let result = parser.parse().unwrap_err();
+
+        assert_eq!(
+            result,
+            ParserError::UnexpectedToken {
+                expected: "Expression",
+                found: TokenType::Arrow,
+                line: Some(3)
+            }
+        )
+    }
+
+    #[test]
+    fn test_missing_ancestor_name() {
+        let source = "
+Program:
+    implementing
+";
+        let mut parser = initialize_parser(source);
+        let result = parser.parse().unwrap_err();
+
+        assert_eq!(
+            result,
+            ParserError::UnexpectedToken {
+                expected: "Class Name",
+                found: TokenType::Endline,
+                line: Some(4)
+            }
+        )
+    }
+
+    #[test]
+    fn test_missing_pattern_value() {
+        let source = "
+Program:
+    method(x:) -> Anything =
+        x
+";
+
+        let mut parser = initialize_parser(source);
+        let result = parser.parse().unwrap_err();
+
+        assert_eq!(
+            result,
+            ParserError::UnexpectedToken {
+                expected: "Expression",
+                found: TokenType::ParenClose,
+                line: Some(3)
+            }
+        )
+    }
+
+    #[test]
+    fn test_missing_return_type() {
+        let source = "
+Program:
+    method(x: Anything) -> =
+        x
+";
+
+        let mut parser = initialize_parser(source);
+        let result = parser.parse().unwrap_err();
+
+        assert_eq!(
+            result,
+            ParserError::UnexpectedToken {
+                expected: "Expression",
+                found: TokenType::Equal,
+                line: Some(3)
+            }
+        )
+    }
+
+    #[test]
+    fn test_missing_indent() {
+        let source = "
+Program:
+method() = 8";
+
+        let mut parser = initialize_parser(source);
+        let result = parser.parse().unwrap_err();
+
+        assert_eq!(
+            result,
+            ParserError::UnexpectedToken {
+                expected: "Indendation start",
+                found: TokenType::Identifier,
+                line: Some(3)
+            }
+        )
+    }
+
+    #[test]
+    fn test_armless_match_expr() {
+        let source = "
+match x:
+";
+        let mut parser = initialize_parser(source);
+        let result = parser.expression().unwrap_err();
+
+        assert_eq!(
+            result,
+            ParserError::UnexpectedToken {
+                expected: "Indendation start",
+                found: TokenType::Eof,
+                line: None
+            }
+        )
+    }
+
+    #[test]
+    fn test_patternless_arm_in_match() {
+        let source = "
+match x:
+    -> 666
+";
+        let mut parser = initialize_parser(source);
+        let result = parser.expression().unwrap_err();
+
+        assert_eq!(
+            result,
+            ParserError::UnexpectedToken {
+                expected: "Expression",
+                found: TokenType::Arrow,
+                line: Some(3)
+            }
+        )
+    }
+
+    #[test]
+    fn test_state_without_paran_close() {
+        let source = "
+Program:
+    Connected(
+";
+
+        let mut parser = initialize_parser(source);
+        let result = parser.expression().unwrap_err();
+
+        assert_eq!(
+            result,
+            ParserError::UnexpectedToken {
+                expected: "Expression",
+                found: TokenType::Endline,
+                line: Some(4)
+            }
+        )
+    }
+
+    #[test]
+    fn test_state_with_missing_value() {
+        let source = "
+Program:
+    Connected(x:)
+";
+
+        let mut parser = initialize_parser(source);
+        let result = parser.expression().unwrap_err();
+
+        assert_eq!(
+            result,
+            ParserError::UnexpectedToken {
+                expected: "Expression",
+                found: TokenType::ParenClose,
+                line: Some(3)
+            }
+        )
+    }
 }

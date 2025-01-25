@@ -3,7 +3,7 @@ use std::{error::Error, fmt::Display};
 
 pub type ParserResult<T> = Result<T, ParserError>;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum ParserError {
     ErrorToken(TokenType, Option<usize>),
     UnexpectedToken {
