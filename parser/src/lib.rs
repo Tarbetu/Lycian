@@ -1612,8 +1612,11 @@ Program:
                         name_id: NameIndex(4),
                         block: None,
                         args: vec![Pattern {
-                            name: Some(NameIndex(5)),
-                            value: None,
+                            name: None,
+                            value: Some(simple_call(
+                                Name::Public("Integer".to_string()),
+                                &parser.names,
+                            )),
                             condition: None,
                         }],
                         caller: None,
@@ -1624,8 +1627,11 @@ Program:
                     name_id: NameIndex(4),
                     block: None,
                     args: vec![Pattern {
-                        name: Some(NameIndex(5)),
-                        value: None,
+                        name: None,
+                        value: Some(simple_call(
+                            Name::Public("Integer".to_string()),
+                            &parser.names,
+                        )),
                         condition: None,
                     }],
                     caller: None,
@@ -1769,8 +1775,11 @@ Program:
                             name_id: NameIndex(7),
                             block: None,
                             args: vec![Pattern {
-                                name: Some(NameIndex(4)),
-                                value: None,
+                                name: None,
+                                value: Some(simple_call(
+                                    Name::Public("Integer".to_string()),
+                                    &parser.names,
+                                )),
                                 condition: None,
                             }],
                             caller: None,
@@ -1781,8 +1790,11 @@ Program:
                         name_id: NameIndex(7),
                         block: None,
                         args: vec![Pattern {
-                            name: Some(NameIndex(4)),
-                            value: None,
+                            name: None,
+                            value: Some(simple_call(
+                                Name::Public("Integer".to_string()),
+                                &parser.names,
+                            )),
                             condition: None,
                         }],
                         caller: None,
@@ -1800,8 +1812,11 @@ Program:
                                 name_id: NameIndex(5),
                                 block: None,
                                 args: vec![Pattern {
-                                    name: Some(NameIndex(9)),
-                                    value: None,
+                                    name: None,
+                                    value: Some(simple_call(
+                                        Name::Protected("i".to_string()),
+                                        &parser.names,
+                                    )),
                                     condition: None,
                                 }],
                                 caller: Some(Box::new(Expression::ClassSelf)),
@@ -1853,8 +1868,11 @@ Program:
                         name_id: NameIndex(12),
                         block: None,
                         args: vec![Pattern {
-                            name: Some(NameIndex(10)),
-                            value: None,
+                            name: None,
+                            value: Some(simple_call(
+                                Name::Protected("result".to_string()),
+                                &parser.names,
+                            )),
                             condition: None,
                         }],
                         caller: Some(Box::new(simple_call(
