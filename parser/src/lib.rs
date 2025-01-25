@@ -670,7 +670,7 @@ impl<'a> Parser<'a> {
                 _ => unreachable!(),
             }
         } else if self.is_match(&[Str]) {
-            let token = self.peek().unwrap();
+            let token = self.previous();
             debug_assert!(token.kind == TokenType::Str);
             let string = self.lexemes[token.start..token.end].join("");
             Literal::Str(string)
@@ -2439,5 +2439,41 @@ Counter:
         assert!(methods.contains_key(&NameIndex(6))); // increment
         assert!(methods.contains_key(&NameIndex(7))); // reset
         assert!(methods.contains_key(&NameIndex(8))); // start
+    }
+
+    #[test]
+    fn test_literal_return_types() {
+        let source = r#"
+Calculator:
+    Ready
+    
+    get_zero -> 0 = 0
+    get_empty -> [] = []
+    get_name -> "Calculator" = "Calculator"
+"#;
+
+        let mut parser = initialize_parser(source);
+        parser.parse().unwrap();
+        let class = parser.classes.get(&NameIndex(1)).unwrap();
+
+        let methods = &class.methods;
+
+        let get_zero = &methods.get(&NameIndex(3)).unwrap()[0];
+        assert_eq!(
+            get_zero.return_type,
+            Some(Expression::Literal(LiteralIndex(0)))
+        );
+
+        let get_empty = &methods.get(&NameIndex(4)).unwrap()[0];
+        assert_eq!(
+            get_empty.return_type,
+            Some(Expression::Literal(LiteralIndex(2)))
+        );
+
+        let get_name = &methods.get(&NameIndex(5)).unwrap()[0];
+        assert_eq!(
+            get_name.return_type,
+            Some(Expression::Literal(LiteralIndex(4)))
+        );
     }
 }
