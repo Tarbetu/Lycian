@@ -211,36 +211,61 @@ impl<'a> Parser<'a> {
         let parsing_mode_before = self.parsing_mode;
         let mut parser = guard(self, |parser| parser.parsing_mode = parsing_mode_before);
 
-        let name_expr = parser.expression()?;
+        let first_expr = parser.expression()?;
 
-        let mut name = if let Call { name_id, .. } = name_expr {
-            Some(name_id)
+        // If it contains : token, this is a name:value pattern
+        if parser.is_match(&[Colon]) {
+            let name = match first_expr {
+                Call { name_id, .. } => Some(name_id),
+                _ => {
+                    return Err(ParserError::UnexpectedToken {
+                        expected: "Name",
+                        found: parser.previous().kind,
+                        line: Some(parser.previous().line),
+                    })
+                }
+            };
+
+            // Value/tip kısmını parse et
+            let value = Some(parser.expression()?);
+
+            // When condition varsa parse et
+            let condition = if parser.is_match(&[When]) {
+                Some(parser.or()?)
+            } else {
+                None
+            };
+
+            Ok(Pattern {
+                name,
+                value,
+                condition,
+            })
         } else {
-            None
-        };
-
-        let mut value = if parser.is_match(&[Colon]) {
-            Some(parser.expression()?)
-        } else {
-            None
-        };
-
-        let condition = if parser.is_match(&[When]) {
-            Some(parser.or()?)
-        } else {
-            None
-        };
-
-        if value.is_none() && pattern_type == PatternType::Argument {
-            value = Some(name_expr);
-            name = None;
+            // Only name or value
+            if pattern_type == PatternType::Argument {
+                // Argüman durumunda direkt değer olarak al
+                Ok(Pattern {
+                    name: None,
+                    value: Some(first_expr),
+                    condition: None,
+                })
+            } else {
+                // Parametre durumunda isim olarak al
+                match first_expr {
+                    Call { name_id, .. } => Ok(Pattern {
+                        name: Some(name_id),
+                        value: None,
+                        condition: None,
+                    }),
+                    _ => Err(ParserError::UnexpectedToken {
+                        expected: "Name",
+                        found: parser.previous().kind,
+                        line: Some(parser.previous().line),
+                    }),
+                }
+            }
         }
-
-        Ok(Pattern {
-            name,
-            value,
-            condition,
-        })
     }
 
     fn block(
@@ -1615,8 +1640,11 @@ Program:
                             name_id: NameIndex(2),
                             block: None,
                             args: vec![Pattern {
-                                name: Some(NameIndex(7)),
-                                value: None,
+                                name: None,
+                                value: Some(simple_call(
+                                    Name::Protected("i".to_string()),
+                                    &parser.names,
+                                )),
                                 condition: None,
                             }],
                         }),
@@ -1923,8 +1951,11 @@ match x:
                     ),
                     (
                         Pattern {
-                            name: Some(NameIndex(4)),
-                            value: None,
+                            name: None,
+                            value: Some(simple_call(
+                                Name::Protected("something".to_string()),
+                                &parser.names
+                            )),
                             condition: Some(Binary(
                                 Box::new(simple_call(
                                     Name::Protected("something".to_string()),
@@ -1965,8 +1996,8 @@ match x:
                     ),
                     (
                         Pattern {
-                            name: Some(NameIndex(8)),
-                            value: None,
+                            name: None,
+                            value: Some(simple_call(Name::Private("_".to_string()), &parser.names)),
                             condition: None
                         },
                         Expression::Literal(LiteralIndex(5))
