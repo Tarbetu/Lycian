@@ -206,7 +206,7 @@ impl<'a> Parser<'a> {
     }
 
     fn pattern(&mut self, pattern_type: PatternType) -> ParserResult<Pattern> {
-        use Expression::Call;
+        use Expression::{Call, ClassSelf};
         use TokenType::*;
         let parsing_mode_before = self.parsing_mode;
         self.parsing_mode = ParsingMode::Pattern;
@@ -217,7 +217,8 @@ impl<'a> Parser<'a> {
         // If it contains : token, this is a name:value pattern
         if parser.is_match(&[Colon]) {
             let name = match first_expr {
-                Call { name_id, .. } => Some(name_id),
+                Call { name_id, .. } => PatternName::Name(name_id),
+                ClassSelf => PatternName::ClassSelf,
                 _ => {
                     return Err(ParserError::UnexpectedToken {
                         expected: "Name",
@@ -251,7 +252,7 @@ impl<'a> Parser<'a> {
 
             match (pattern_type, first_expr) {
                 (PatternType::Argument, expr) => Ok(Pattern {
-                    name: None,
+                    name: PatternName::NoName,
                     value: Some(expr),
                     condition,
                 }),
@@ -264,7 +265,7 @@ impl<'a> Parser<'a> {
                         args,
                     },
                 ) if args.is_empty() => Ok(Pattern {
-                    name: Some(name_id),
+                    name: PatternName::Name(name_id),
                     value: None,
                     condition,
                 }),
@@ -1403,7 +1404,7 @@ Program:
                 block: None,
                 args: vec![Pattern {
                     value: Some(Expression::Literal(LiteralIndex(0))),
-                    name: None,
+                    name: PatternName::NoName,
                     condition: None
                 }],
                 caller: None
@@ -1575,7 +1576,7 @@ result = [1, 2, 3, 4, 5].map: |i|
                             Box::new(Expression::Literal(LiteralIndex(1)))
                         )),
                         params: vec![Pattern {
-                            name: Some(NameIndex(3)),
+                            name: PatternName::Name(NameIndex(3)),
                             value: None,
                             condition: None
                         }]
@@ -1606,12 +1607,12 @@ Program:
                 environment: Some(AHashMap::new()),
                 decorator: String::new(),
                 params: vec![Pattern {
-                    name: Some(NameIndex(3)),
+                    name: PatternName::Name(NameIndex(3)),
                     value: Some(Expression::Call {
                         name_id: NameIndex(4),
                         block: None,
                         args: vec![Pattern {
-                            name: None,
+                            name: PatternName::NoName,
                             value: Some(simple_call(
                                 Name::Public("Integer".to_string()),
                                 &parser.names,
@@ -1626,7 +1627,7 @@ Program:
                     name_id: NameIndex(4),
                     block: None,
                     args: vec![Pattern {
-                        name: None,
+                        name: PatternName::NoName,
                         value: Some(simple_call(
                             Name::Public("Integer".to_string()),
                             &parser.names,
@@ -1645,7 +1646,7 @@ Program:
                     block: Some(Box::new(Expression::Block {
                         expressions: vec![],
                         params: vec![Pattern {
-                            name: Some(NameIndex(7)),
+                            name: PatternName::Name(NameIndex(7)),
                             value: None,
                             condition: None,
                         }],
@@ -1654,7 +1655,7 @@ Program:
                             name_id: NameIndex(2),
                             block: None,
                             args: vec![Pattern {
-                                name: None,
+                                name: PatternName::NoName,
                                 value: Some(simple_call(
                                     Name::Protected("i".to_string()),
                                     &parser.names,
@@ -1739,7 +1740,7 @@ Program:
                 Function {
                     name: NameIndex(5),
                     params: vec![Pattern {
-                        name: Some(NameIndex(6)),
+                        name: PatternName::Name(NameIndex(6)),
                         value: Some(simple_call(
                             Name::Public("Integer".to_string()),
                             &parser.names,
@@ -1769,12 +1770,12 @@ Program:
                     environment: Some(AHashMap::new()),
                     decorator: String::new(),
                     params: vec![Pattern {
-                        name: Some(NameIndex(6)),
+                        name: PatternName::Name(NameIndex(6)),
                         value: Some(Expression::Call {
                             name_id: NameIndex(7),
                             block: None,
                             args: vec![Pattern {
-                                name: None,
+                                name: PatternName::NoName,
                                 value: Some(simple_call(
                                     Name::Public("Integer".to_string()),
                                     &parser.names,
@@ -1789,7 +1790,7 @@ Program:
                         name_id: NameIndex(7),
                         block: None,
                         args: vec![Pattern {
-                            name: None,
+                            name: PatternName::NoName,
                             value: Some(simple_call(
                                 Name::Public("Integer".to_string()),
                                 &parser.names,
@@ -1803,7 +1804,7 @@ Program:
                         block: Some(Box::new(Expression::Block {
                             expressions: vec![],
                             params: vec![Pattern {
-                                name: Some(NameIndex(9)),
+                                name: PatternName::Name(NameIndex(9)),
                                 value: None,
                                 condition: None,
                             }],
@@ -1811,7 +1812,7 @@ Program:
                                 name_id: NameIndex(5),
                                 block: None,
                                 args: vec![Pattern {
-                                    name: None,
+                                    name: PatternName::NoName,
                                     value: Some(simple_call(
                                         Name::Protected("i".to_string()),
                                         &parser.names,
@@ -1846,7 +1847,7 @@ Program:
                     name_id: NameIndex(5),
                     caller: Some(Box::new(Expression::ClassSelf)),
                     args: vec![Pattern {
-                        name: None,
+                        name: PatternName::NoName,
                         value: Some(Expression::Literal(LiteralIndex(1))),
                         condition: None,
                     }],
@@ -1867,7 +1868,7 @@ Program:
                         name_id: NameIndex(12),
                         block: None,
                         args: vec![Pattern {
-                            name: None,
+                            name: PatternName::NoName,
                             value: Some(simple_call(
                                 Name::Protected("result".to_string()),
                                 &parser.names,
@@ -1916,7 +1917,7 @@ match x:
                 arms: vec![
                     (
                         Pattern {
-                            name: None,
+                            name: PatternName::NoName,
                             value: Some(Expression::Literal(LiteralIndex(0))),
                             condition: None,
                         },
@@ -1924,7 +1925,7 @@ match x:
                     ),
                     (
                         Pattern {
-                            name: None,
+                            name: PatternName::NoName,
                             value: Some(simple_call(
                                 Name::Public("Integer".to_string()),
                                 &parser.names
@@ -1959,7 +1960,7 @@ match x:
                 arms: vec![
                     (
                         Pattern {
-                            name: Some(NameIndex(2)),
+                            name: PatternName::Name(NameIndex(2)),
                             value: Some(simple_call(
                                 Name::Public("Integer".to_string()),
                                 &parser.names
@@ -1977,7 +1978,7 @@ match x:
                     ),
                     (
                         Pattern {
-                            name: None,
+                            name: PatternName::NoName,
                             value: Some(simple_call(
                                 Name::Protected("something".to_string()),
                                 &parser.names
@@ -1995,7 +1996,7 @@ match x:
                     ),
                     (
                         Pattern {
-                            name: Some(NameIndex(5)),
+                            name: PatternName::Name(NameIndex(5)),
                             value: Some(Expression::Call {
                                 name_id: NameIndex(7),
                                 block: None,
@@ -2004,7 +2005,7 @@ match x:
                                     // Integer as a param name instead of value? This sound wrong.
                                     // Value should represent the type here.
                                     // Check self.pattern function
-                                    name: None,
+                                    name: PatternName::NoName,
                                     value: Some(simple_call(
                                         Name::Public("Integer".to_string()),
                                         &parser.names
@@ -2022,7 +2023,7 @@ match x:
                     ),
                     (
                         Pattern {
-                            name: None,
+                            name: PatternName::NoName,
                             value: Some(simple_call(Name::Private("_".to_string()), &parser.names)),
                             condition: None
                         },
@@ -2253,7 +2254,7 @@ Connection:
             Statement::ClassState {
                 name: NameIndex(4), // Error
                 patterns: vec![Pattern {
-                    name: None,
+                    name: PatternName::NoName,
                     value: Some(simple_call(
                         Name::Public("String".to_string()),
                         &parser.names,
@@ -2265,7 +2266,7 @@ Connection:
                 name: NameIndex(6), // DetailedError
                 patterns: vec![
                     Pattern {
-                        name: Some(NameIndex(7)), // code
+                        name: PatternName::Name(NameIndex(7)), // code
                         value: Some(simple_call(
                             Name::Public("Integer".to_string()),
                             &parser.names,
@@ -2273,7 +2274,7 @@ Connection:
                         condition: None,
                     },
                     Pattern {
-                        name: Some(NameIndex(9)), // message
+                        name: PatternName::Name(NameIndex(9)), // message
                         value: Some(simple_call(
                             Name::Public("String".to_string()),
                             &parser.names,
@@ -2291,7 +2292,7 @@ Connection:
     }
 
     #[test]
-    fn test_state_with_methods() {
+    fn test_state_with_methods_and_self_params() {
         use Expression::{Block, Call, ClassSelf, Match};
         let source = r#"
 Connection:
@@ -2305,7 +2306,7 @@ Connection:
                 Disconnected
             Disconnected -> Disconnected
 
-    connect(socket: Socket) -> Connected =
+    connect(self: Disconnected, socket: Socket) -> Connected =
         Connected(socket)
 "#;
 
@@ -2324,13 +2325,13 @@ Connection:
                 arms: vec![
                     (
                         Pattern {
-                            name: None,
+                            name: PatternName::NoName,
                             value: Some(Call {
                                 name_id: NameIndex(2),
                                 caller: None,
                                 block: None,
                                 args: vec![Pattern {
-                                    name: None,
+                                    name: PatternName::NoName,
                                     value: Some(simple_call(
                                         Name::Protected("socket".to_string()),
                                         &parser.names
@@ -2359,7 +2360,7 @@ Connection:
                     ),
                     (
                         Pattern {
-                            name: None,
+                            name: PatternName::NoName,
                             value: Some(simple_call(
                                 Name::Public("Disconnected".to_string()),
                                 &parser.names
@@ -2379,7 +2380,7 @@ Connection:
                 caller: None,
                 block: None,
                 args: vec![Pattern {
-                    name: None,
+                    name: PatternName::NoName,
                     value: Some(simple_call(
                         Name::Protected("socket".to_string()),
                         &parser.names
@@ -2392,7 +2393,19 @@ Connection:
         assert_eq!(
             connect_method.params[0],
             Pattern {
-                name: Some(NameIndex(3)),
+                name: PatternName::ClassSelf,
+                value: Some(simple_call(
+                    Name::Public("Disconnected".to_string()),
+                    &parser.names
+                )),
+                condition: None
+            }
+        );
+
+        assert_eq!(
+            connect_method.params[1],
+            Pattern {
+                name: PatternName::Name(NameIndex(3)),
                 value: Some(simple_call(
                     Name::Public("Socket".to_string()),
                     &parser.names
