@@ -41,7 +41,7 @@ give_five -> 5 = 5
 computed_five -> (2 + 3) = 5
 
 # Function return types create distinct subtypes
-Counter(x: Integer) -> Increment = x + 1
+Counter(x: Integer) -> Increment = Increment(x)
 Increment(x: Integer) -> Integer = x + 1
 
 count = Counter(5)     # Type is Increment
