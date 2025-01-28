@@ -34,7 +34,7 @@ In Lycian, types are essentially callable functions representing their possible 
 
 ```lycian
 # Integer is a type that represents all possible integer values
-x: Integer = 5  # x is bound to one of Integer's possible values
+x -> Integer = 5  # x is bound to one of Integer's possible values
 
 # Literal values can be used as types
 give_five -> 5 = 5
@@ -66,9 +66,9 @@ Classes in Lycian define type constructors with distinct state types:
 
 ```lycian
 Connection:
-    Connected(socket: Socket) -> SendData
-    Disconnected -> Reconnect
-    Failed(error: Error) -> Reconnect
+    Connected(socket: Socket)
+    Disconnected
+    Failed(error: Error)
 
     # Each method returns its own type
     SendData(data: Data) -> Result = ...
@@ -107,7 +107,7 @@ DatabaseClient:
 ### Pattern Matching with Types
 
 ```lycian
-Optional:
+Option:
     Some(value)
     None
 
