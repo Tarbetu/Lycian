@@ -17,7 +17,8 @@ The language emphasizes compile-time guarantees through its powerful type system
 
 ### Concurrency and Performance
 - **Default Async Behavior**: Built-in support for concurrent programming
-- **Automatic Parallelization**: Parallel execution of independent impure operations
+- **Automatic Parallelization**: Parallel execution of independent pure operations
+- **Automatic Async**: Async execution of independent impure operations
 - **Compile-time Memory Management**: Deterministic memory handling without GC overhead
 - **Zero-cost Abstractions**: Pattern matching and async operations compile to efficient code
 
@@ -83,10 +84,9 @@ result = connection.SendData(data)  # Type is Result
 
 ```lycian
 # Pure function with compile-time type checking
-Calculate(x: Integer) -> 42 = 
-    match x:
-        21 -> 42
-        _ -> error("Only 21 is accepted")
+Calculate(numbers: List(Integer)) -> List(Integer) =
+    # Multiple Pure computations are computed parallelly
+    numbers.Map: |x| x * 2
 
 # Impure operations must implement Mutation
 DatabaseClient:
@@ -98,7 +98,7 @@ DatabaseClient:
             Ok(valid) -> self.write(valid)
             Err(e) -> Err(e)
 
-    # Multiple impure operations are automatically parallel
+    # Multiple impure operations are automatically async
     SaveMultiple(records: List) -> Result =
         results = records.Map(self.Save)
         CollectResults(results)
