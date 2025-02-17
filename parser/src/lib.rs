@@ -13,7 +13,7 @@ extern crate scopeguard;
 use std::mem::swap;
 
 pub use crate::literal::*;
-use class::Class;
+pub use class::Class;
 pub use expression::Expression;
 pub use scopeguard::guard;
 pub use statement::Statement;

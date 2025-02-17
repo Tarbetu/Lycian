@@ -1,26 +1,39 @@
-mod name_resolver;
-mod resolver;
-pub use name_resolver::NameResolver;
+mod resolution_error;
+mod scope_resolver;
+use parser::{Class, Literal, LiteralIndex, Name, NameIndex, Parser};
 
-struct AnalysisPipeline {
-    name_resolver: NameResolver,
-    // inheritance_resolver: InheritanceResolver,
-    // type_checker: TypeChecker,
-    // memory_analyzer: MemoryAnalyzer,
-    // effect_analyzer: EffectAnalyzer,
-    // optimizer: Optimizer,
+use scope_resolver::{ScopeHierarchy, ScopeResolver};
+
+use ahash::AHashMap;
+use bimap::BiHashMap;
+pub use resolution_error::ResolutionError;
+pub use resolution_error::ResolutionResult;
+
+/// The AnalysisPipeline struct contains all the analyzers and optimizers that are used to
+/// analyze the AST and produce a more optimized version of the AST.
+///
+/// ScopeResolver: Revolves the scope hierarchy and names of a program.
+/// InheritanceResolver: Lycian staticly resolves inheritance and checks for cycles.
+/// TypeChecker: A classic for AOT compiler, type checker checks the typing of the program.
+/// MemoryAnalyzer: Lycian handles the memory statically instead of using a garbage collector.
+/// EffectAnalyzer: Lycian aims to be a pure language, but it allows effects for IO. Also we check the branches to determine if the code suits for GPU.
+/// Codegen and Optimizer: Lycian will have a backend, and we can use MLIR optimization passes.
+pub struct AnalysisPipeline {
+    names: BiHashMap<NameIndex, Name>,
+    classes: AHashMap<NameIndex, Class>,
+    literals: AHashMap<LiteralIndex, Literal>,
 }
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+impl AnalysisPipeline {
+    pub fn new(parser: Parser) -> AnalysisPipeline {
+        AnalysisPipeline {
+            names: parser.names,
+            literals: parser.literals,
+            classes: parser.classes,
+        }
+    }
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
+    pub fn resolve_scopes(&self) -> ResolutionResult<ScopeHierarchy> {
+        ScopeResolver::new(&self.names, &self.classes).resolve()
     }
 }
