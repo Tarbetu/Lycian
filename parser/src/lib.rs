@@ -8,8 +8,6 @@ mod operator;
 mod pattern;
 mod statement;
 
-extern crate scopeguard;
-
 use std::mem::swap;
 
 pub use crate::literal::*;
@@ -30,7 +28,6 @@ use operator::Operator;
 use scanner::{Token, TokenType};
 
 use ahash::AHashMap;
-use bimap::BiHashMap;
 use either::Either;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -46,7 +43,7 @@ pub enum ParsingMode {
 }
 
 pub struct Parser<'a> {
-    pub names: BiHashMap<NameIndex, Name>,
+    pub names: AHashMap<NameIndex, Name>,
     pub literals: AHashMap<LiteralIndex, Literal>,
     pub classes: AHashMap<NameIndex, Class>,
     lexemes: Vec<&'a str>,
@@ -63,7 +60,7 @@ impl<'a> Parser<'a> {
             lexemes,
             tokens,
             position: 0,
-            names: BiHashMap::new(),
+            names: AHashMap::new(),
             classes: AHashMap::new(),
             current_methods: AHashMap::new(),
             current_environment: AHashMap::new(),
@@ -73,7 +70,7 @@ impl<'a> Parser<'a> {
     }
 
     pub fn get_name(&self, index: NameIndex) -> &Name {
-        self.names.get_by_left(&index).expect("Invalid name index")
+        self.names.get(&index).expect("Invalid name index")
     }
 
     pub fn get_literal(&self, index: LiteralIndex) -> &Literal {
@@ -641,6 +638,7 @@ impl<'a> Parser<'a> {
             Expression::Super
         } else if self.is_match(&[Constant, Identifier, Wildcard]) {
             Expression::Call {
+                // It's expensive to allocate names for every call
                 name_id: self.consume_name_from_token(Some(self.previous()), "CallRoot")?,
                 block: None,
                 caller: None,
@@ -852,14 +850,12 @@ impl<'a> Parser<'a> {
             _ => unreachable!(),
         };
 
-        if let Some(index) = self.names.get_by_right(&name) {
-            *index
-        } else if name.as_ref() == "Main" {
+        if name.as_ref() == "Main" {
             NameIndex(0)
         } else {
             let next_index = self
                 .names
-                .left_values()
+                .keys()
                 .max()
                 .map(|index| NameIndex(index.0 + 1))
                 .unwrap_or(NameIndex(1));
@@ -1046,15 +1042,6 @@ mod tests {
 
     fn create_number(number: f64) -> rug::Float {
         rug::Float::with_val(literal::PRECISION, number)
-    }
-
-    fn simple_call(call: Name, names: &BiHashMap<NameIndex, Name>) -> Expression {
-        Expression::Call {
-            name_id: *names.get_by_right(&call).unwrap(),
-            block: None,
-            args: vec![],
-            caller: None,
-        }
     }
 
     #[test]
@@ -1497,7 +1484,7 @@ call:
                     args: vec![],
                     caller: None
                 })),
-                name_id: NameIndex(1),
+                name_id: NameIndex(2),
                 args: vec![],
                 block: None
             }
@@ -1509,17 +1496,17 @@ call:
         let mut parser = initialize_parser("result = 0 * 2");
         let result = parser.expression().unwrap();
 
-        assert_eq!(result, Expression::Function(NameIndex(1)));
+        assert_eq!(result, Expression::Function(NameIndex(2)));
 
         assert_eq!(
             parser
                 .current_environment
-                .get(&NameIndex(1))
+                .get(&NameIndex(2))
                 .unwrap()
                 .first()
                 .unwrap(),
             &Function {
-                name: NameIndex(1),
+                name: NameIndex(2),
                 params: vec![],
                 return_type: None,
                 environment: None,
@@ -1544,17 +1531,17 @@ result = [1, 2, 3, 4, 5].map: |i|
         let mut parser = initialize_parser(source);
         let result = parser.expression().unwrap();
 
-        assert_eq!(result, Expression::Function(NameIndex(1)));
+        assert_eq!(result, Expression::Function(NameIndex(5)));
 
         assert_eq!(
             parser
                 .current_environment
-                .get(&NameIndex(1))
+                .get(&NameIndex(5))
                 .unwrap()
                 .first()
                 .unwrap(),
             &Function {
-                name: NameIndex(1),
+                name: NameIndex(5),
                 params: vec![],
                 return_type: None,
                 environment: None,
@@ -1567,7 +1554,7 @@ result = [1, 2, 3, 4, 5].map: |i|
                         expressions: vec![],
                         value: Box::new(Expression::Binary(
                             Box::new(Call {
-                                name_id: NameIndex(3),
+                                name_id: NameIndex(4),
                                 caller: None,
                                 args: vec![],
                                 block: None
@@ -1613,10 +1600,12 @@ Program:
                         block: None,
                         args: vec![Pattern {
                             name: PatternName::NoName,
-                            value: Some(simple_call(
-                                Name::Public("Integer".to_string()),
-                                &parser.names,
-                            )),
+                            value: Some(Expression::Call {
+                                caller: None,
+                                name_id: NameIndex(5),
+                                args: vec![],
+                                block: None,
+                            }),
                             condition: None,
                         }],
                         caller: None,
@@ -1624,42 +1613,48 @@ Program:
                     condition: None,
                 }],
                 return_type: Some(Expression::Call {
-                    name_id: NameIndex(4),
+                    name_id: NameIndex(6),
                     block: None,
                     args: vec![Pattern {
                         name: PatternName::NoName,
-                        value: Some(simple_call(
-                            Name::Public("Integer".to_string()),
-                            &parser.names,
-                        )),
+                        value: Some(Expression::Call {
+                            caller: None,
+                            name_id: NameIndex(7),
+                            args: vec![],
+                            block: None,
+                        }),
                         condition: None,
                     }],
                     caller: None,
                 }),
                 body: Expression::Call {
-                    name_id: NameIndex(6),
-                    caller: Some(Box::new(simple_call(
-                        Name::Protected("x".to_string()),
-                        &parser.names,
-                    ))),
+                    name_id: NameIndex(9),
+                    caller: Some(Box::new(Expression::Call {
+                        caller: None,
+                        name_id: NameIndex(8),
+                        args: vec![],
+                        block: None,
+                    })),
                     args: vec![],
                     block: Some(Box::new(Expression::Block {
                         expressions: vec![],
                         params: vec![Pattern {
-                            name: PatternName::Name(NameIndex(7)),
+                            name: PatternName::Name(NameIndex(10)),
                             value: None,
                             condition: None,
                         }],
                         value: Box::new(Expression::Call {
                             caller: Some(Box::new(Expression::ClassSelf)),
-                            name_id: NameIndex(2),
+                            name_id: NameIndex(11),
                             block: None,
                             args: vec![Pattern {
                                 name: PatternName::NoName,
-                                value: Some(simple_call(
-                                    Name::Protected("i".to_string()),
-                                    &parser.names,
-                                )),
+                                value: Some(Expression::Call {
+                                    caller: None,
+                                    name_id: NameIndex(12),
+                                    args: vec![],
+                                    block: None,
+                                }),
                                 condition: None,
                             }],
                         }),
@@ -1722,10 +1717,12 @@ Program:
             vec![Function {
                 name: NameIndex(3),
                 params: vec![],
-                return_type: Some(simple_call(
-                    Name::Public("Integer".to_string()),
-                    &parser.names,
-                )),
+                return_type: Some(Expression::Call {
+                    caller: None,
+                    name_id: NameIndex(666),
+                    args: vec![],
+                    block: None,
+                }),
                 environment: Some(AHashMap::new()),
                 body: Expression::Literal(LiteralIndex(0)),
                 decorator: String::new(),
@@ -1741,19 +1738,28 @@ Program:
                     name: NameIndex(5),
                     params: vec![Pattern {
                         name: PatternName::Name(NameIndex(6)),
-                        value: Some(simple_call(
-                            Name::Public("Integer".to_string()),
-                            &parser.names,
-                        )),
+                        value: Some(Expression::Call {
+                            caller: None,
+                            name_id: NameIndex(666),
+                            args: vec![],
+                            block: None,
+                        }),
                         condition: None,
                     }],
-                    return_type: Some(simple_call(
-                        Name::Public("Integer".to_string()),
-                        &parser.names,
-                    )),
+                    return_type: Some(Expression::Call {
+                        caller: None,
+                        name_id: NameIndex(666),
+                        args: vec![],
+                        block: None,
+                    }),
                     environment: Some(AHashMap::new()),
                     body: Expression::Binary(
-                        Box::new(simple_call(Name::Protected("x".to_string()), &parser.names)),
+                        Box::new(Expression::Call {
+                            caller: None,
+                            name_id: NameIndex(666),
+                            args: vec![],
+                            block: None,
+                        }),
                         Operator::Multiply,
                         Box::new(Expression::Call {
                             name_id: NameIndex(3),
@@ -1776,10 +1782,12 @@ Program:
                             block: None,
                             args: vec![Pattern {
                                 name: PatternName::NoName,
-                                value: Some(simple_call(
-                                    Name::Public("Integer".to_string()),
-                                    &parser.names,
-                                )),
+                                value: Some(Expression::Call {
+                                    caller: None,
+                                    name_id: NameIndex(666),
+                                    args: vec![],
+                                    block: None,
+                                }),
                                 condition: None,
                             }],
                             caller: None,
@@ -1791,10 +1799,12 @@ Program:
                         block: None,
                         args: vec![Pattern {
                             name: PatternName::NoName,
-                            value: Some(simple_call(
-                                Name::Public("Integer".to_string()),
-                                &parser.names,
-                            )),
+                            value: Some(Expression::Call {
+                                caller: None,
+                                name_id: NameIndex(666),
+                                args: vec![],
+                                block: None,
+                            }),
                             condition: None,
                         }],
                         caller: None,
@@ -1813,10 +1823,12 @@ Program:
                                 block: None,
                                 args: vec![Pattern {
                                     name: PatternName::NoName,
-                                    value: Some(simple_call(
-                                        Name::Protected("i".to_string()),
-                                        &parser.names,
-                                    )),
+                                    value: Some(Expression::Call {
+                                        caller: None,
+                                        name_id: NameIndex(666),
+                                        args: vec![],
+                                        block: None,
+                                    }),
                                     condition: None,
                                 }],
                                 caller: Some(Box::new(Expression::ClassSelf)),
@@ -1869,16 +1881,20 @@ Program:
                         block: None,
                         args: vec![Pattern {
                             name: PatternName::NoName,
-                            value: Some(simple_call(
-                                Name::Protected("result".to_string()),
-                                &parser.names,
-                            )),
+                            value: Some(Expression::Call {
+                                caller: None,
+                                name_id: NameIndex(666),
+                                args: vec![],
+                                block: None,
+                            }),
                             condition: None,
                         }],
-                        caller: Some(Box::new(simple_call(
-                            Name::Public("IO".to_string()),
-                            &parser.names,
-                        ))),
+                        caller: Some(Box::new(Expression::Call {
+                            caller: None,
+                            name_id: NameIndex(666),
+                            args: vec![],
+                            block: None,
+                        })),
                     }),
                     expressions: vec![Expression::Function(NameIndex(10))],
                     params: vec![],
@@ -1913,7 +1929,12 @@ match x:
         assert_eq!(
             result,
             Match {
-                scrutinee: Box::new(simple_call(Name::Protected("x".to_string()), &parser.names)),
+                scrutinee: Box::new(Expression::Call {
+                    caller: None,
+                    name_id: NameIndex(1),
+                    args: vec![],
+                    block: None
+                }),
                 arms: vec![
                     (
                         Pattern {
@@ -1926,10 +1947,12 @@ match x:
                     (
                         Pattern {
                             name: PatternName::NoName,
-                            value: Some(simple_call(
-                                Name::Public("Integer".to_string()),
-                                &parser.names
-                            )),
+                            value: Some(Expression::Call {
+                                caller: None,
+                                name_id: NameIndex(2),
+                                args: vec![],
+                                block: None
+                            }),
                             condition: None,
                         },
                         Expression::Literal(LiteralIndex(2)),
@@ -1956,20 +1979,29 @@ match x:
         assert_eq!(
             result,
             Match {
-                scrutinee: Box::new(simple_call(Name::Protected("x".to_string()), &parser.names)),
+                scrutinee: Box::new(Expression::Call {
+                    caller: None,
+                    name_id: NameIndex(1),
+                    args: vec![],
+                    block: None
+                }),
                 arms: vec![
                     (
                         Pattern {
                             name: PatternName::Name(NameIndex(2)),
-                            value: Some(simple_call(
-                                Name::Public("Integer".to_string()),
-                                &parser.names
-                            )),
+                            value: Some(Expression::Call {
+                                caller: None,
+                                name_id: NameIndex(3),
+                                args: vec![],
+                                block: None
+                            }),
                             condition: Some(Binary(
-                                Box::new(simple_call(
-                                    Name::Protected("number".to_string()),
-                                    &parser.names
-                                )),
+                                Box::new(Expression::Call {
+                                    caller: None,
+                                    name_id: NameIndex(4),
+                                    args: vec![],
+                                    block: None
+                                }),
                                 Operator::Greater,
                                 Box::new(Expression::Literal(LiteralIndex(0)))
                             )),
@@ -1979,15 +2011,19 @@ match x:
                     (
                         Pattern {
                             name: PatternName::NoName,
-                            value: Some(simple_call(
-                                Name::Protected("something".to_string()),
-                                &parser.names
-                            )),
+                            value: Some(Expression::Call {
+                                caller: None,
+                                name_id: NameIndex(5),
+                                args: vec![],
+                                block: None
+                            }),
                             condition: Some(Binary(
-                                Box::new(simple_call(
-                                    Name::Protected("something".to_string()),
-                                    &parser.names
-                                )),
+                                Box::new(Expression::Call {
+                                    caller: None,
+                                    name_id: NameIndex(6),
+                                    args: vec![],
+                                    block: None
+                                }),
                                 Operator::Equal,
                                 Box::new(Expression::Literal(LiteralIndex(2)))
                             )),
@@ -1996,9 +2032,9 @@ match x:
                     ),
                     (
                         Pattern {
-                            name: PatternName::Name(NameIndex(5)),
+                            name: PatternName::Name(NameIndex(7)),
                             value: Some(Expression::Call {
-                                name_id: NameIndex(7),
+                                name_id: NameIndex(9),
                                 block: None,
                                 args: vec![Pattern {
                                     // Test fails in here.
@@ -2006,16 +2042,20 @@ match x:
                                     // Value should represent the type here.
                                     // Check self.pattern function
                                     name: PatternName::NoName,
-                                    value: Some(simple_call(
-                                        Name::Public("Integer".to_string()),
-                                        &parser.names
-                                    )),
+                                    value: Some(Expression::Call {
+                                        caller: None,
+                                        name_id: NameIndex(10),
+                                        args: vec![],
+                                        block: None
+                                    }),
                                     condition: None,
                                 }],
-                                caller: Some(Box::new(simple_call(
-                                    Name::Public("Option".to_string()),
-                                    &parser.names
-                                ))),
+                                caller: Some(Box::new(Expression::Call {
+                                    caller: None,
+                                    name_id: NameIndex(8),
+                                    args: vec![],
+                                    block: None
+                                })),
                             }),
                             condition: None,
                         },
@@ -2024,7 +2064,12 @@ match x:
                     (
                         Pattern {
                             name: PatternName::NoName,
-                            value: Some(simple_call(Name::Private("_".to_string()), &parser.names)),
+                            value: Some(Expression::Call {
+                                caller: None,
+                                name_id: NameIndex(11),
+                                args: vec![],
+                                block: None
+                            }),
                             condition: None
                         },
                         Expression::Literal(LiteralIndex(5))
@@ -2255,10 +2300,12 @@ Connection:
                 name: NameIndex(4), // Error
                 patterns: vec![Pattern {
                     name: PatternName::NoName,
-                    value: Some(simple_call(
-                        Name::Public("String".to_string()),
-                        &parser.names,
-                    )),
+                    value: Some(Expression::Call {
+                        caller: None,
+                        name_id: NameIndex(5),
+                        args: vec![],
+                        block: None,
+                    }),
                     condition: None,
                 }],
             },
@@ -2267,18 +2314,22 @@ Connection:
                 patterns: vec![
                     Pattern {
                         name: PatternName::Name(NameIndex(7)), // code
-                        value: Some(simple_call(
-                            Name::Public("Integer".to_string()),
-                            &parser.names,
-                        )),
+                        value: Some(Expression::Call {
+                            caller: None,
+                            name_id: NameIndex(8),
+                            args: vec![],
+                            block: None,
+                        }),
                         condition: None,
                     },
                     Pattern {
                         name: PatternName::Name(NameIndex(9)), // message
-                        value: Some(simple_call(
-                            Name::Public("String".to_string()),
-                            &parser.names,
-                        )),
+                        value: Some(Expression::Call {
+                            caller: None,
+                            name_id: NameIndex(10),
+                            args: vec![],
+                            block: None,
+                        }),
                         condition: None,
                     },
                 ],
@@ -2332,10 +2383,12 @@ Connection:
                                 block: None,
                                 args: vec![Pattern {
                                     name: PatternName::NoName,
-                                    value: Some(simple_call(
-                                        Name::Protected("socket".to_string()),
-                                        &parser.names
-                                    )),
+                                    value: Some(Expression::Call {
+                                        caller: None,
+                                        name_id: NameIndex(666),
+                                        args: vec![],
+                                        block: None
+                                    }),
                                     condition: None
                                 }]
                             }),
@@ -2344,30 +2397,41 @@ Connection:
                         Block {
                             expressions: vec![Call {
                                 name_id: NameIndex(7),
-                                caller: Some(Box::new(simple_call(
-                                    Name::Protected("socket".to_string()),
-                                    &parser.names
-                                ))),
+                                caller: Some(Box::new(Expression::Call {
+                                    caller: None,
+                                    name_id: NameIndex(666),
+                                    args: vec![],
+                                    block: None
+                                })),
                                 args: vec![],
                                 block: None
                             }],
-                            value: Box::new(simple_call(
-                                Name::Public("Disconnected".to_string()),
-                                &parser.names
-                            )),
+                            value: Box::new(Expression::Call {
+                                caller: None,
+                                name_id: NameIndex(666),
+                                args: vec![],
+                                block: None
+                            }),
                             params: vec![]
                         }
                     ),
                     (
                         Pattern {
                             name: PatternName::NoName,
-                            value: Some(simple_call(
-                                Name::Public("Disconnected".to_string()),
-                                &parser.names
-                            )),
+                            value: Some(Expression::Call {
+                                caller: None,
+                                name_id: NameIndex(666),
+                                args: vec![],
+                                block: None
+                            }),
                             condition: None
                         },
-                        simple_call(Name::Public("Disconnected".to_string()), &parser.names)
+                        Expression::Call {
+                            caller: None,
+                            name_id: NameIndex(666),
+                            args: vec![],
+                            block: None
+                        }
                     )
                 ]
             }
@@ -2381,10 +2445,12 @@ Connection:
                 block: None,
                 args: vec![Pattern {
                     name: PatternName::NoName,
-                    value: Some(simple_call(
-                        Name::Protected("socket".to_string()),
-                        &parser.names
-                    )),
+                    value: Some(Expression::Call {
+                        caller: None,
+                        name_id: NameIndex(666),
+                        args: vec![],
+                        block: None
+                    }),
                     condition: None
                 }]
             }
@@ -2394,10 +2460,12 @@ Connection:
             connect_method.params[0],
             Pattern {
                 name: PatternName::ClassSelf,
-                value: Some(simple_call(
-                    Name::Public("Disconnected".to_string()),
-                    &parser.names
-                )),
+                value: Some(Expression::Call {
+                    caller: None,
+                    name_id: NameIndex(666),
+                    args: vec![],
+                    block: None
+                }),
                 condition: None
             }
         );
@@ -2406,28 +2474,34 @@ Connection:
             connect_method.params[1],
             Pattern {
                 name: PatternName::Name(NameIndex(3)),
-                value: Some(simple_call(
-                    Name::Public("Socket".to_string()),
-                    &parser.names
-                )),
+                value: Some(Expression::Call {
+                    caller: None,
+                    name_id: NameIndex(666),
+                    args: vec![],
+                    block: None
+                }),
                 condition: None
             }
         );
 
         assert_eq!(
             disconnect_method.return_type,
-            Some(simple_call(
-                Name::Public("Disconnected".to_string()),
-                &parser.names
-            ))
+            Some(Expression::Call {
+                caller: None,
+                name_id: NameIndex(666),
+                args: vec![],
+                block: None
+            })
         );
 
         assert_eq!(
             connect_method.return_type,
-            Some(simple_call(
-                Name::Public("Connected".to_string()),
-                &parser.names
-            ))
+            Some(Expression::Call {
+                caller: None,
+                name_id: NameIndex(666),
+                args: vec![],
+                block: None
+            })
         );
     }
 
