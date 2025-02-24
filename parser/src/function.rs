@@ -1,15 +1,15 @@
 use ahash::AHashMap;
 
+use crate::EntityIndex;
 use crate::Expression;
-use crate::NameIndex;
 use crate::Pattern;
 
 #[derive(Debug, PartialEq)]
 pub struct Function {
-    pub name: NameIndex,
+    pub name: EntityIndex,
     pub params: Vec<Pattern>,
     pub return_type: Option<Expression>,
-    pub environment: Option<AHashMap<NameIndex, Vec<Function>>>,
+    pub environment: Option<AHashMap<EntityIndex, Vec<Function>>>,
     pub body: Expression,
     pub decorator: String,
 }

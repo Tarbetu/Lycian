@@ -1,12 +1,12 @@
-use crate::NameIndex;
+use crate::EntityIndex;
 use crate::Pattern;
 
 #[derive(Debug, PartialEq)]
 pub enum Statement {
-    Implementing(NameIndex),
+    Implementing(EntityIndex),
     ClassState {
-        name: NameIndex,
+        name: EntityIndex,
         patterns: Vec<Pattern>,
     },
-    Method(NameIndex),
+    Method(EntityIndex),
 }

@@ -1,4 +1,4 @@
-use crate::{Expression, NameIndex};
+use crate::{EntityIndex, Expression};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Pattern {
@@ -9,7 +9,7 @@ pub struct Pattern {
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum PatternName {
-    Name(NameIndex),
+    Name(EntityIndex),
     ClassSelf,
     NoName,
 }
