@@ -7,6 +7,7 @@ mod literal;
 mod operator;
 mod pattern;
 mod statement;
+mod tests;
 
 use std::mem::swap;
 
@@ -576,7 +577,7 @@ impl<'a> Parser<'a> {
     fn call(&mut self) -> ParserResult<Expression> {
         use Expression::Call;
         use TokenType::{Colon, Dot, ParenClose, ParenOpen};
-        let mut expr = self.primary()?;
+        let mut expr = self.primary(true)?;
 
         loop {
             if self.is_match(&[ParenOpen]) {
@@ -604,7 +605,7 @@ impl<'a> Parser<'a> {
                     }
                 };
             } else if self.is_match(&[Dot]) {
-                let Call { name_id, .. } = self.primary()? else {
+                let Call { name_id, .. } = self.primary(false)? else {
                     return Err(ParserError::UnexpectedToken {
                         expected: "CallRoot",
                         found: self.peek().map(|t| t.kind).unwrap_or(TokenType::Eof),
@@ -652,7 +653,7 @@ impl<'a> Parser<'a> {
         Ok(expr)
     }
 
-    fn primary(&mut self) -> ParserResult<Expression> {
+    fn primary(&mut self, use_same_call_entity: bool) -> ParserResult<Expression> {
         use TokenType::{ClassSelf, Constant, Identifier, ParenClose, ParenOpen, Super, Wildcard};
 
         Ok(if self.is_match(&[ParenOpen]) {
@@ -665,8 +666,7 @@ impl<'a> Parser<'a> {
             Expression::Super
         } else if self.is_match(&[Constant, Identifier, Wildcard]) {
             Expression::Call {
-                // It's expensive to allocate names for every call
-                name_id: self.consume_call_name(self.previous())?,
+                name_id: self.consume_call_name(self.previous(), use_same_call_entity)?,
                 block: None,
                 caller: None,
                 args: vec![],
@@ -815,61 +815,155 @@ impl<'a> Parser<'a> {
 
     fn consume_class_name(&mut self) -> ParserResult<EntityIndex> {
         self.advance();
-        let name = self.create_entity(self.previous(), EntityKind::Class, "Class Name")?;
-        let name_index = EntityIndex(self.entities.len());
-        self.entities.insert(name_index, name);
-        self.global_entity.sub_entities.push(name_index);
-        self.current_class_index = name_index;
-        Ok(name_index)
+        let name = self.allocate_name(self.previous());
+        match self
+            .global_entity
+            .find_sub_entity_by_name(&self.entities, &name)
+        {
+            Some(Entity { kind, .. }) if kind != &EntityKind::Class => {
+                panic!(
+                    "{} is already declared as a {:?}, not as a class!",
+                    name, kind
+                )
+            }
+            Some(_) => Err(ParserError::DuplicateClass(name, self.previous().line)),
+            None => {
+                let index = self.next_entity_index();
+                let entity = self.create_entity(
+                    index,
+                    name,
+                    self.previous(),
+                    EntityKind::Class,
+                    "Class Name",
+                )?;
+                self.entities.insert(index, entity);
+                self.global_entity.sub_entities.push(index);
+                self.current_class_index = index;
+                Ok(index)
+            }
+        }
     }
 
     fn consume_declaration_name(&mut self) -> ParserResult<EntityIndex> {
         self.advance();
-        let name =
-            self.create_entity(self.previous(), EntityKind::Declaration, "Declaration Name")?;
-        let name_index = EntityIndex(self.entities.len());
-        let Some(class_entity) = self.entities.get_mut(&self.current_class_index) else {
-            panic!(
-                "Current Class Index {:?} doesn't exist!",
-                self.current_class_index
-            )
-        };
-        class_entity.sub_entities.push(name_index);
-        self.entities.insert(name_index, name);
-        self.current_declaration_index = name_index;
-        Ok(name_index)
+        let name = self.allocate_name(self.previous());
+        match self
+            .entities
+            .get(&self.current_class_index)
+            .and_then(|entity| entity.find_sub_entity_by_name(&self.entities, &name))
+        {
+            Some(Entity { kind, .. }) if kind != &EntityKind::Declaration => {
+                panic!(
+                    "{} is already declared as a {:?}, not as a declaration!",
+                    name, kind
+                )
+            }
+            Some(Entity { index, .. }) => {
+                self.current_declaration_index = *index;
+                Ok(*index)
+            }
+            None => {
+                let index = self.next_entity_index();
+                let entity = self.create_entity(
+                    index,
+                    name,
+                    self.previous(),
+                    EntityKind::Declaration,
+                    "Declaration Name",
+                )?;
+                let Some(class_entity) = self.entities.get_mut(&self.current_class_index) else {
+                    panic!(
+                        "Current Class Index {:?} doesn't exist!",
+                        self.current_class_index
+                    )
+                };
+                class_entity.sub_entities.push(index);
+                self.entities.insert(index, entity);
+                self.current_declaration_index = index;
+                Ok(index)
+            }
+        }
     }
 
     fn consume_local_name(&mut self, token: Token) -> ParserResult<EntityIndex> {
-        let name = self.create_entity(token, EntityKind::Local, "Local Name")?;
-        let name_index = EntityIndex(self.entities.len());
-        let Some(declaration_entity) = self.entities.get_mut(&self.current_declaration_index)
-        else {
-            panic!(
-                "Current Declaration Index {:?} doesn't exist!",
-                self.current_declaration_index
-            )
-        };
-        declaration_entity.sub_entities.push(name_index);
-        self.entities.insert(name_index, name);
-        self.current_local_index = name_index;
-        Ok(name_index)
+        let name = self.allocate_name(self.previous());
+        match self
+            .entities
+            .get(&self.current_declaration_index)
+            .and_then(|entity| entity.find_sub_entity_by_name(&self.entities, &name))
+        {
+            Some(Entity { kind, .. }) if kind != &EntityKind::Local => {
+                panic!(
+                    "{} is already declared as a {:?}, not as a local!",
+                    name, kind
+                )
+            }
+            Some(_) => Err(ParserError::DuplicateLocal(name, self.previous().line)),
+            None => {
+                let index = self.next_entity_index();
+                let entity =
+                    self.create_entity(index, name, token, EntityKind::Local, "Local Name")?;
+                let Some(declaration_entity) =
+                    self.entities.get_mut(&self.current_declaration_index)
+                else {
+                    panic!(
+                        "Current Declaration Index {:?} doesn't exist!",
+                        self.current_declaration_index
+                    )
+                };
+                if declaration_entity.kind != EntityKind::Declaration {
+                    panic!(
+                        "Current Declaration Index {:?} is not a declaration! It is a {:?}",
+                        self.current_declaration_index, declaration_entity.kind
+                    )
+                }
+                declaration_entity.sub_entities.push(index);
+                self.entities.insert(index, entity);
+                self.current_local_index = index;
+                Ok(index)
+            }
+        }
     }
 
-    fn consume_call_name(&mut self, token: Token) -> ParserResult<EntityIndex> {
-        let name = self.create_entity(token, EntityKind::Call, "CallRoot")?;
-        let name_index = EntityIndex(self.entities.len());
-        let index = if self.current_local_index == EntityIndex(0) {
+    fn consume_call_name(
+        &mut self,
+        token: Token,
+        use_same_entity: bool,
+    ) -> ParserResult<EntityIndex> {
+        let name = self.allocate_name(self.previous());
+        let parent_index = if self.current_local_index == EntityIndex(0) {
             self.current_declaration_index
         } else {
             self.current_local_index
         };
-        let Some(entity) = self.entities.get_mut(&index) else {
-            panic!("Current Index {:?} doesn't exist!", index)
-        };
-        entity.sub_entities.push(name_index);
-        self.entities.insert(name_index, name);
-        Ok(name_index)
+        match self
+            .entities
+            .get(&self.current_declaration_index)
+            .and_then(|entity| entity.find_sub_entity_by_name(&self.entities, &name))
+        {
+            Some(Entity { kind, .. }) if kind != &EntityKind::Call => {
+                panic!(
+                    "{} is already declared as a {:?}, not as a call!",
+                    name, kind
+                )
+            }
+            Some(Entity { index, name, .. }) if (use_same_entity || name == "_") => Ok(*index),
+            _ => {
+                let index = self.next_entity_index();
+                let entity =
+                    self.create_entity(index, name, token, EntityKind::Call, "CallRoot")?;
+                let Some(parent) = self.entities.get_mut(&parent_index) else {
+                    panic!("Current Index {:?} doesn't exist!", index)
+                };
+                parent.sub_entities.push(index);
+                self.entities.insert(index, entity);
+                Ok(index)
+            }
+        }
+    }
+
+    fn next_entity_index(&self) -> EntityIndex {
+        EntityIndex(self.entities.len() + 1)
     }
 
     fn consume_decorator(&mut self) -> ParserResult<String> {
@@ -889,6 +983,8 @@ impl<'a> Parser<'a> {
 
     fn create_entity(
         &mut self,
+        index: EntityIndex,
+        name: String,
         token: Token,
         kind: EntityKind,
         expected: &'static str,
@@ -898,10 +994,10 @@ impl<'a> Parser<'a> {
 
         match token.kind {
             Constant | Identifier | Wildcard => {
-                let name = self.lexemes[token.start..token.end].join("");
                 let visibility = Visibility::from(token.kind);
 
                 Ok(Entity {
+                    index,
                     name,
                     visibility,
                     kind,
@@ -914,6 +1010,10 @@ impl<'a> Parser<'a> {
                 line: Some(token.line),
             }),
         }
+    }
+
+    fn allocate_name(&mut self, token: Token) -> String {
+        self.lexemes[token.start..token.end].join("")
     }
 
     fn push_literal(&mut self, index: LiteralIndex, literal: Literal) {
@@ -1068,1555 +1168,5 @@ impl<'a> Parser<'a> {
 
             _ => None,
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use scanner::Scanner;
-    use unicode_segmentation::UnicodeSegmentation;
-
-    fn initialize_parser(source: &str) -> Parser {
-        let graphemes = source.graphemes(true).collect::<Vec<&str>>();
-        let tokens = Scanner::new(source, false).scan();
-        Parser::new(graphemes, tokens)
-    }
-
-    fn parse(source: &str) -> Parser {
-        let mut parser = initialize_parser(source);
-        parser.parse().unwrap();
-
-        parser
-    }
-
-    fn create_number(number: f64) -> rug::Float {
-        rug::Float::with_val(literal::PRECISION, number)
-    }
-
-    #[test]
-    fn parse_simple_class() {
-        let source = "
-Program:
-    Main = 42
-";
-
-        let result = parse(source);
-        assert_eq!(
-            result.get_entity(EntityIndex(1)),
-            &Entity::Public("Program".to_string())
-        );
-        assert_eq!(
-            result.get_literal(LiteralIndex(0)),
-            &Literal::Integer(create_number(42.0))
-        );
-        let main_method = result
-            .classes
-            .get(&EntityIndex(1))
-            .unwrap()
-            .methods
-            .get(&EntityIndex(0))
-            .map(|methods| methods.first().unwrap())
-            .unwrap();
-        assert_eq!(main_method.params, vec![]);
-        assert_eq!(main_method.return_type, None);
-        assert_eq!(main_method.environment.as_ref().map(|e| e.len()), Some(0));
-        assert_eq!(main_method.body, Expression::Literal(LiteralIndex(0)));
-        assert!(main_method.decorator.is_empty());
-    }
-
-    #[test]
-    fn parse_simple_class_with_constexpr() {
-        let source = "
-Program:
-    Main = 420 + 69
-";
-
-        let result = parse(source);
-        assert_eq!(
-            result.get_entity(EntityIndex(1)),
-            &Entity::Public("Program".to_string())
-        );
-        assert_eq!(
-            result.get_literal(LiteralIndex(2)),
-            &Literal::Integer(create_number(420.0 + 69.0))
-        );
-        let main_method = result
-            .classes
-            .get(&EntityIndex(1))
-            .unwrap()
-            .methods
-            .get(&EntityIndex(0))
-            .map(|methods| methods.first().unwrap())
-            .unwrap();
-        assert_eq!(main_method.params, vec![]);
-        assert_eq!(main_method.return_type, None);
-        assert_eq!(main_method.environment.as_ref().map(|e| e.len()), Some(0));
-        assert_eq!(main_method.body, Expression::Literal(LiteralIndex(2)));
-        assert!(main_method.decorator.is_empty());
-    }
-
-    #[test]
-    fn parse_add() {
-        let mut parser = initialize_parser("420 + 69");
-        let result = parser.term().unwrap();
-
-        assert_eq!(
-            parser.get_literal(LiteralIndex(0)),
-            &Literal::Integer(create_number(420.0))
-        );
-        assert_eq!(
-            parser.get_literal(LiteralIndex(1)),
-            &Literal::Integer(create_number(69.0))
-        );
-
-        assert_eq!(
-            result,
-            Expression::Binary(
-                Box::new(Expression::Literal(LiteralIndex(0))),
-                Operator::Add,
-                Box::new(Expression::Literal(LiteralIndex(1)))
-            )
-        );
-
-        assert_eq!(
-            parser.eval_constexpr(&result).unwrap(),
-            Some(Expression::Literal(LiteralIndex(2)))
-        );
-
-        assert_eq!(
-            parser.get_literal(LiteralIndex(2)),
-            &Literal::Integer(create_number(420.0 + 69.0))
-        );
-    }
-
-    #[test]
-    fn parse_minus() {
-        let mut parser = initialize_parser("420 - 69");
-        let result = parser.term().unwrap();
-
-        assert_eq!(
-            parser.get_literal(LiteralIndex(0)),
-            &Literal::Integer(create_number(420.0))
-        );
-        assert_eq!(
-            parser.get_literal(LiteralIndex(1)),
-            &Literal::Integer(create_number(69.0))
-        );
-
-        assert_eq!(
-            result,
-            Expression::Binary(
-                Box::new(Expression::Literal(LiteralIndex(0))),
-                Operator::Substract,
-                Box::new(Expression::Literal(LiteralIndex(1)))
-            )
-        );
-
-        assert_eq!(
-            parser.eval_constexpr(&result).unwrap(),
-            Some(Expression::Literal(LiteralIndex(2)))
-        );
-
-        assert_eq!(
-            parser.get_literal(LiteralIndex(2)),
-            &Literal::Integer(create_number(420.0 - 69.0))
-        );
-    }
-
-    #[test]
-    fn parse_multiply() {
-        let mut parser = initialize_parser("420 * 69");
-        let result = parser.term().unwrap();
-
-        assert_eq!(
-            parser.get_literal(LiteralIndex(0)),
-            &Literal::Integer(create_number(420.0))
-        );
-        assert_eq!(
-            parser.get_literal(LiteralIndex(1)),
-            &Literal::Integer(create_number(69.0))
-        );
-
-        assert_eq!(
-            result,
-            Expression::Binary(
-                Box::new(Expression::Literal(LiteralIndex(0))),
-                Operator::Multiply,
-                Box::new(Expression::Literal(LiteralIndex(1)))
-            )
-        );
-
-        assert_eq!(
-            parser.eval_constexpr(&result).unwrap(),
-            Some(Expression::Literal(LiteralIndex(2)))
-        );
-
-        assert_eq!(
-            parser.get_literal(LiteralIndex(2)),
-            &Literal::Integer(create_number(420.0 * 69.0))
-        );
-    }
-
-    #[test]
-    fn parse_divide() {
-        let mut parser = initialize_parser("420 / 69");
-        let result = parser.term().unwrap();
-
-        assert_eq!(
-            parser.get_literal(LiteralIndex(0)),
-            &Literal::Integer(create_number(420.0))
-        );
-        assert_eq!(
-            parser.get_literal(LiteralIndex(1)),
-            &Literal::Integer(create_number(69.0))
-        );
-
-        assert_eq!(
-            result,
-            Expression::Binary(
-                Box::new(Expression::Literal(LiteralIndex(0))),
-                Operator::Divide,
-                Box::new(Expression::Literal(LiteralIndex(1)))
-            )
-        );
-
-        assert_eq!(
-            parser.eval_constexpr(&result).unwrap(),
-            Some(Expression::Literal(LiteralIndex(2)))
-        );
-
-        assert_eq!(
-            parser.get_literal(LiteralIndex(2)),
-            &Literal::Float(create_number(420.0 / 69.0))
-        );
-    }
-
-    #[test]
-    fn parse_modulo() {
-        let mut parser = initialize_parser("420 % 69");
-        let result = parser.term().unwrap();
-
-        assert_eq!(
-            parser.get_literal(LiteralIndex(0)),
-            &Literal::Integer(create_number(420.0))
-        );
-        assert_eq!(
-            parser.get_literal(LiteralIndex(1)),
-            &Literal::Integer(create_number(69.0))
-        );
-
-        assert_eq!(
-            result,
-            Expression::Binary(
-                Box::new(Expression::Literal(LiteralIndex(0))),
-                Operator::Modulo,
-                Box::new(Expression::Literal(LiteralIndex(1)))
-            )
-        );
-
-        assert_eq!(
-            parser.eval_constexpr(&result).unwrap(),
-            Some(Expression::Literal(LiteralIndex(2)))
-        );
-
-        assert_eq!(
-            parser.get_literal(LiteralIndex(2)),
-            &Literal::Integer(create_number(420.0 % 69.0))
-        );
-    }
-
-    #[test]
-    fn parse_negate() {
-        let mut parser = initialize_parser("-31");
-        let result = parser.unary().unwrap();
-
-        assert_eq!(
-            parser.get_literal(LiteralIndex(0)),
-            &Literal::Integer(create_number(31.0))
-        );
-
-        assert_eq!(
-            result,
-            Expression::Unary(
-                Operator::Negate,
-                Box::new(Expression::Literal(LiteralIndex(0))),
-            )
-        );
-        assert_eq!(
-            parser.eval_constexpr(&result).unwrap(),
-            Some(Expression::Literal(LiteralIndex(1)))
-        );
-
-        assert_eq!(
-            parser.get_literal(LiteralIndex(1)),
-            &Literal::Integer(create_number(-31.0))
-        );
-    }
-
-    #[test]
-    fn parse_grouping() {
-        let mut parser = initialize_parser("(420 + 69) * 2");
-        let result = parser.factor().unwrap();
-
-        assert_eq!(
-            parser.get_literal(LiteralIndex(0)),
-            &Literal::Integer(create_number(420.0))
-        );
-
-        assert_eq!(
-            parser.get_literal(LiteralIndex(1)),
-            &Literal::Integer(create_number(69.0))
-        );
-
-        assert_eq!(
-            parser.get_literal(LiteralIndex(2)),
-            &Literal::Integer(create_number(2.0))
-        );
-
-        assert_eq!(
-            result,
-            Expression::Binary(
-                Box::new(Expression::Grouping(Box::new(Expression::Binary(
-                    Box::new(Expression::Literal(LiteralIndex(0))),
-                    Operator::Add,
-                    Box::new(Expression::Literal(LiteralIndex(1)))
-                )))),
-                Operator::Multiply,
-                Box::new(Expression::Literal(LiteralIndex(2))),
-            )
-        );
-        assert_eq!(
-            parser.eval_constexpr(&result).unwrap(),
-            Some(Expression::Literal(LiteralIndex(3)))
-        );
-
-        assert_eq!(
-            parser.get_literal(LiteralIndex(3)),
-            &Literal::Integer(create_number((420.0 + 69.0) * 2.0))
-        );
-    }
-
-    #[test]
-    fn parse_simply_call() {
-        let mut parser = initialize_parser("call");
-        let result = parser.call().unwrap();
-
-        assert_eq!(
-            result,
-            Expression::Call {
-                name_id: EntityIndex(1),
-                block: None,
-                args: vec![],
-                caller: None
-            }
-        )
-    }
-
-    #[test]
-    fn parse_simply_call_with_redundant_paranthesis() {
-        let mut parser = initialize_parser("call()");
-        let result = parser.call().unwrap();
-
-        assert_eq!(
-            result,
-            Expression::Call {
-                name_id: EntityIndex(1),
-                block: None,
-                args: vec![],
-                caller: None
-            }
-        )
-    }
-
-    #[test]
-    fn parse_call_with_args() {
-        let mut parser = initialize_parser("call(5)");
-        let result = parser.call().unwrap();
-
-        assert_eq!(
-            result,
-            Expression::Call {
-                name_id: EntityIndex(1),
-                block: None,
-                args: vec![Pattern {
-                    value: Some(Expression::Literal(LiteralIndex(0))),
-                    name: PatternName::NoName,
-                    condition: None
-                }],
-                caller: None
-            }
-        )
-    }
-
-    #[test]
-    fn parse_simply_call_with_block() {
-        use Expression::Call;
-        let source = "
-call:
-    block
-";
-        let mut parser = initialize_parser(source);
-        let result = parser.call().unwrap();
-
-        assert_eq!(
-            result,
-            Call {
-                name_id: EntityIndex(1),
-                block: Some(Box::new(Call {
-                    name_id: EntityIndex(2),
-                    block: None,
-                    args: vec![],
-                    caller: None
-                })),
-                args: vec![],
-                caller: None
-            }
-        )
-    }
-
-    #[test]
-    fn parse_method_call() {
-        use Expression::Call;
-        let mut parser = initialize_parser("function.method");
-        let result = parser.call().unwrap();
-
-        assert_eq!(
-            result,
-            Call {
-                caller: Some(Box::new(Call {
-                    name_id: EntityIndex(1),
-                    block: None,
-                    args: vec![],
-                    caller: None
-                })),
-                name_id: EntityIndex(2),
-                args: vec![],
-                block: None
-            }
-        )
-    }
-
-    #[test]
-    fn parse_method_call_with_empty_paranthesis() {
-        use Expression::Call;
-        let mut parser = initialize_parser("function().method()");
-        let result = parser.call().unwrap();
-
-        assert_eq!(
-            result,
-            Call {
-                caller: Some(Box::new(Call {
-                    name_id: EntityIndex(1),
-                    block: None,
-                    args: vec![],
-                    caller: None
-                })),
-                name_id: EntityIndex(2),
-                args: vec![],
-                block: None
-            }
-        )
-    }
-
-    #[test]
-    fn parse_method_call_with_same_name_with_method() {
-        use Expression::Call;
-        let mut parser = initialize_parser("call.call");
-        let result = parser.call().unwrap();
-
-        assert_eq!(
-            result,
-            Call {
-                caller: Some(Box::new(Call {
-                    name_id: EntityIndex(1),
-                    block: None,
-                    args: vec![],
-                    caller: None
-                })),
-                name_id: EntityIndex(2),
-                args: vec![],
-                block: None
-            }
-        )
-    }
-
-    #[test]
-    fn parse_function_assignment() {
-        let mut parser = initialize_parser("result = 0 * 2");
-        let result = parser.expression().unwrap();
-
-        assert_eq!(result, Expression::Function(EntityIndex(2)));
-
-        assert_eq!(
-            parser
-                .current_environment
-                .get(&EntityIndex(2))
-                .unwrap()
-                .first()
-                .unwrap(),
-            &Function {
-                name: EntityIndex(2),
-                params: vec![],
-                return_type: None,
-                environment: None,
-                decorator: String::new(),
-                body: Expression::Literal(LiteralIndex(2))
-            }
-        );
-
-        assert_eq!(
-            parser.get_literal(LiteralIndex(2)),
-            &Literal::Integer(create_number(0.0))
-        );
-    }
-
-    #[test]
-    fn parse_map_example() {
-        use Expression::{Block, Call};
-        let source = "
-result = [1, 2, 3, 4, 5].map: |i|
-    i * 2
-";
-        let mut parser = initialize_parser(source);
-        let result = parser.expression().unwrap();
-
-        assert_eq!(result, Expression::Function(EntityIndex(5)));
-
-        assert_eq!(
-            parser
-                .current_environment
-                .get(&EntityIndex(5))
-                .unwrap()
-                .first()
-                .unwrap(),
-            &Function {
-                name: EntityIndex(5),
-                params: vec![],
-                return_type: None,
-                environment: None,
-                decorator: String::new(),
-                body: Call {
-                    caller: Some(Box::new(Expression::Literal(LiteralIndex(0)))),
-                    name_id: EntityIndex(2),
-                    args: vec![],
-                    block: Some(Box::new(Block {
-                        expressions: vec![],
-                        value: Box::new(Expression::Binary(
-                            Box::new(Call {
-                                name_id: EntityIndex(4),
-                                caller: None,
-                                args: vec![],
-                                block: None
-                            }),
-                            Operator::Multiply,
-                            Box::new(Expression::Literal(LiteralIndex(1)))
-                        )),
-                        params: vec![Pattern {
-                            name: PatternName::Name(EntityIndex(3)),
-                            value: None,
-                            condition: None
-                        }]
-                    }))
-                }
-            }
-        )
-    }
-
-    #[test]
-    fn test_class_with_method() {
-        let source = "
-Program:
-    multiply_with_five(x: List(Integer)) -> List(Integer) =
-        x.map: |i|
-            self.multiply_with_five(i)
-";
-        let mut parser = initialize_parser(source);
-        parser.parse().unwrap();
-
-        let class = parser.classes.get(&EntityIndex(1)).unwrap();
-
-        let mut methods = AHashMap::new();
-        methods.insert(
-            EntityIndex(2),
-            vec![Function {
-                name: EntityIndex(2),
-                environment: Some(AHashMap::new()),
-                decorator: String::new(),
-                params: vec![Pattern {
-                    name: PatternName::Name(EntityIndex(3)),
-                    value: Some(Expression::Call {
-                        name_id: EntityIndex(4),
-                        block: None,
-                        args: vec![Pattern {
-                            name: PatternName::NoName,
-                            value: Some(Expression::Call {
-                                caller: None,
-                                name_id: EntityIndex(5),
-                                args: vec![],
-                                block: None,
-                            }),
-                            condition: None,
-                        }],
-                        caller: None,
-                    }),
-                    condition: None,
-                }],
-                return_type: Some(Expression::Call {
-                    name_id: EntityIndex(6),
-                    block: None,
-                    args: vec![Pattern {
-                        name: PatternName::NoName,
-                        value: Some(Expression::Call {
-                            caller: None,
-                            name_id: EntityIndex(7),
-                            args: vec![],
-                            block: None,
-                        }),
-                        condition: None,
-                    }],
-                    caller: None,
-                }),
-                body: Expression::Call {
-                    name_id: EntityIndex(9),
-                    caller: Some(Box::new(Expression::Call {
-                        caller: None,
-                        name_id: EntityIndex(8),
-                        args: vec![],
-                        block: None,
-                    })),
-                    args: vec![],
-                    block: Some(Box::new(Expression::Block {
-                        expressions: vec![],
-                        params: vec![Pattern {
-                            name: PatternName::Name(EntityIndex(10)),
-                            value: None,
-                            condition: None,
-                        }],
-                        value: Box::new(Expression::Call {
-                            caller: Some(Box::new(Expression::ClassSelf)),
-                            name_id: EntityIndex(11),
-                            block: None,
-                            args: vec![Pattern {
-                                name: PatternName::NoName,
-                                value: Some(Expression::Call {
-                                    caller: None,
-                                    name_id: EntityIndex(12),
-                                    args: vec![],
-                                    block: None,
-                                }),
-                                condition: None,
-                            }],
-                        }),
-                    })),
-                },
-            }],
-        );
-
-        assert_eq!(class.methods, methods)
-    }
-
-    #[test]
-    fn test_fullfillied_class() {
-        let source = "
-Program:
-    implementing FiftiestFive
-
-    take_five -> Integer = 5
-
-    multiply_with_five(x: Integer) -> Integer =
-        x * self.take_five
-
-    multiply_with_five(x: List(Integer)) -> List(Integer) =
-        x.map: |i|
-            self.multiply_with_five(i)
-
-    Main =
-        result = self.multiply_with_five([1, 2, 3, 4, 5])
-        IO.print(result)
-";
-
-        let mut parser = initialize_parser(source);
-        parser.parse().unwrap();
-
-        let class = parser.classes.get(&EntityIndex(1)).unwrap();
-        assert_eq!(class.name, EntityIndex(1));
-        assert_eq!(class.ancestors, vec![EntityIndex(2)]);
-        assert_eq!(class.states, vec![]);
-        assert_eq!(class.decorator, String::new());
-
-        let mut methods = AHashMap::new();
-
-        // take_five method
-        methods.insert(
-            EntityIndex(3),
-            vec![Function {
-                name: EntityIndex(3),
-                params: vec![],
-                return_type: Some(Expression::Call {
-                    caller: None,
-                    name_id: EntityIndex(666),
-                    args: vec![],
-                    block: None,
-                }),
-                environment: Some(AHashMap::new()),
-                body: Expression::Literal(LiteralIndex(0)),
-                decorator: String::new(),
-            }],
-        );
-
-        // multiply_with_five method
-        methods.insert(
-            EntityIndex(5),
-            vec![
-                // multiply_with_five(x: Integer)
-                Function {
-                    name: EntityIndex(5),
-                    params: vec![Pattern {
-                        name: PatternName::Name(EntityIndex(6)),
-                        value: Some(Expression::Call {
-                            caller: None,
-                            name_id: EntityIndex(666),
-                            args: vec![],
-                            block: None,
-                        }),
-                        condition: None,
-                    }],
-                    return_type: Some(Expression::Call {
-                        caller: None,
-                        name_id: EntityIndex(666),
-                        args: vec![],
-                        block: None,
-                    }),
-                    environment: Some(AHashMap::new()),
-                    body: Expression::Binary(
-                        Box::new(Expression::Call {
-                            caller: None,
-                            name_id: EntityIndex(666),
-                            args: vec![],
-                            block: None,
-                        }),
-                        Operator::Multiply,
-                        Box::new(Expression::Call {
-                            name_id: EntityIndex(3),
-                            block: None,
-                            args: vec![],
-                            caller: Some(Box::new(Expression::ClassSelf)),
-                        }),
-                    ),
-                    decorator: String::new(),
-                },
-                // multiply_with_five(x: List(Integer))
-                Function {
-                    name: EntityIndex(5),
-                    environment: Some(AHashMap::new()),
-                    decorator: String::new(),
-                    params: vec![Pattern {
-                        name: PatternName::Name(EntityIndex(6)),
-                        value: Some(Expression::Call {
-                            name_id: EntityIndex(7),
-                            block: None,
-                            args: vec![Pattern {
-                                name: PatternName::NoName,
-                                value: Some(Expression::Call {
-                                    caller: None,
-                                    name_id: EntityIndex(666),
-                                    args: vec![],
-                                    block: None,
-                                }),
-                                condition: None,
-                            }],
-                            caller: None,
-                        }),
-                        condition: None,
-                    }],
-                    return_type: Some(Expression::Call {
-                        name_id: EntityIndex(7),
-                        block: None,
-                        args: vec![Pattern {
-                            name: PatternName::NoName,
-                            value: Some(Expression::Call {
-                                caller: None,
-                                name_id: EntityIndex(666),
-                                args: vec![],
-                                block: None,
-                            }),
-                            condition: None,
-                        }],
-                        caller: None,
-                    }),
-                    body: Expression::Call {
-                        name_id: EntityIndex(8),
-                        block: Some(Box::new(Expression::Block {
-                            expressions: vec![],
-                            params: vec![Pattern {
-                                name: PatternName::Name(EntityIndex(9)),
-                                value: None,
-                                condition: None,
-                            }],
-                            value: Box::new(Expression::Call {
-                                name_id: EntityIndex(5),
-                                block: None,
-                                args: vec![Pattern {
-                                    name: PatternName::NoName,
-                                    value: Some(Expression::Call {
-                                        caller: None,
-                                        name_id: EntityIndex(666),
-                                        args: vec![],
-                                        block: None,
-                                    }),
-                                    condition: None,
-                                }],
-                                caller: Some(Box::new(Expression::ClassSelf)),
-                            }),
-                        })),
-                        args: vec![],
-                        caller: Some(Box::new(Expression::Call {
-                            name_id: EntityIndex(6),
-                            block: None,
-                            args: vec![],
-                            caller: None,
-                        })),
-                    },
-                },
-            ],
-        );
-
-        let mut main_environment = AHashMap::new();
-        main_environment.insert(
-            EntityIndex(10),
-            vec![Function {
-                name: EntityIndex(10),
-                params: vec![],
-                return_type: None,
-                environment: None,
-                decorator: String::new(),
-                body: Expression::Call {
-                    name_id: EntityIndex(5),
-                    caller: Some(Box::new(Expression::ClassSelf)),
-                    args: vec![Pattern {
-                        name: PatternName::NoName,
-                        value: Some(Expression::Literal(LiteralIndex(1))),
-                        condition: None,
-                    }],
-                    block: None,
-                },
-            }],
-        );
-
-        methods.insert(
-            EntityIndex(0),
-            vec![Function {
-                name: EntityIndex(0),
-                params: vec![],
-                return_type: None,
-                environment: Some(main_environment),
-                body: Expression::Block {
-                    value: Box::new(Expression::Call {
-                        name_id: EntityIndex(12),
-                        block: None,
-                        args: vec![Pattern {
-                            name: PatternName::NoName,
-                            value: Some(Expression::Call {
-                                caller: None,
-                                name_id: EntityIndex(666),
-                                args: vec![],
-                                block: None,
-                            }),
-                            condition: None,
-                        }],
-                        caller: Some(Box::new(Expression::Call {
-                            caller: None,
-                            name_id: EntityIndex(666),
-                            args: vec![],
-                            block: None,
-                        })),
-                    }),
-                    expressions: vec![Expression::Function(EntityIndex(10))],
-                    params: vec![],
-                },
-                decorator: String::new(),
-            }],
-        );
-        assert_eq!(class.methods, methods);
-    }
-
-    #[test]
-    fn test_is_match_with_multiple_kinds() {
-        use TokenType::{Equal, EqualEqual};
-
-        let mut parser = initialize_parser("==");
-
-        assert!(parser.is_match(&[Equal, EqualEqual]));
-    }
-
-    #[test]
-    fn parse_match_expr() {
-        use Expression::Match;
-        let source = "
-match x:
-    42 -> 42
-    Integer -> 69
-";
-
-        let mut parser = initialize_parser(source);
-        let result = parser.expression().unwrap();
-
-        assert_eq!(
-            result,
-            Match {
-                scrutinee: Box::new(Expression::Call {
-                    caller: None,
-                    name_id: EntityIndex(1),
-                    args: vec![],
-                    block: None
-                }),
-                arms: vec![
-                    (
-                        Pattern {
-                            name: PatternName::NoName,
-                            value: Some(Expression::Literal(LiteralIndex(0))),
-                            condition: None,
-                        },
-                        Expression::Literal(LiteralIndex(1)),
-                    ),
-                    (
-                        Pattern {
-                            name: PatternName::NoName,
-                            value: Some(Expression::Call {
-                                caller: None,
-                                name_id: EntityIndex(2),
-                                args: vec![],
-                                block: None
-                            }),
-                            condition: None,
-                        },
-                        Expression::Literal(LiteralIndex(2)),
-                    ),
-                ],
-            },
-        )
-    }
-
-    #[test]
-    fn parse_match_expr_with_condition_and_value() {
-        use Expression::{Binary, Match};
-        let source = "
-match x:
-    number: Integer when number > 0 -> 42
-    something when something == 0 -> 69
-    call_me_maybe: Option.Some(Integer) -> 420
-    _ -> 69
-";
-
-        let mut parser = initialize_parser(source);
-        let result = parser.expression().unwrap();
-
-        assert_eq!(
-            result,
-            Match {
-                scrutinee: Box::new(Expression::Call {
-                    caller: None,
-                    name_id: EntityIndex(1),
-                    args: vec![],
-                    block: None
-                }),
-                arms: vec![
-                    (
-                        Pattern {
-                            name: PatternName::Name(EntityIndex(2)),
-                            value: Some(Expression::Call {
-                                caller: None,
-                                name_id: EntityIndex(3),
-                                args: vec![],
-                                block: None
-                            }),
-                            condition: Some(Binary(
-                                Box::new(Expression::Call {
-                                    caller: None,
-                                    name_id: EntityIndex(4),
-                                    args: vec![],
-                                    block: None
-                                }),
-                                Operator::Greater,
-                                Box::new(Expression::Literal(LiteralIndex(0)))
-                            )),
-                        },
-                        Expression::Literal(LiteralIndex(1))
-                    ),
-                    (
-                        Pattern {
-                            name: PatternName::NoName,
-                            value: Some(Expression::Call {
-                                caller: None,
-                                name_id: EntityIndex(5),
-                                args: vec![],
-                                block: None
-                            }),
-                            condition: Some(Binary(
-                                Box::new(Expression::Call {
-                                    caller: None,
-                                    name_id: EntityIndex(6),
-                                    args: vec![],
-                                    block: None
-                                }),
-                                Operator::Equal,
-                                Box::new(Expression::Literal(LiteralIndex(2)))
-                            )),
-                        },
-                        Expression::Literal(LiteralIndex(3))
-                    ),
-                    (
-                        Pattern {
-                            name: PatternName::Name(EntityIndex(7)),
-                            value: Some(Expression::Call {
-                                name_id: EntityIndex(9),
-                                block: None,
-                                args: vec![Pattern {
-                                    // Test fails in here.
-                                    // Integer as a param name instead of value? This sound wrong.
-                                    // Value should represent the type here.
-                                    // Check self.pattern function
-                                    name: PatternName::NoName,
-                                    value: Some(Expression::Call {
-                                        caller: None,
-                                        name_id: EntityIndex(10),
-                                        args: vec![],
-                                        block: None
-                                    }),
-                                    condition: None,
-                                }],
-                                caller: Some(Box::new(Expression::Call {
-                                    caller: None,
-                                    name_id: EntityIndex(8),
-                                    args: vec![],
-                                    block: None
-                                })),
-                            }),
-                            condition: None,
-                        },
-                        Expression::Literal(LiteralIndex(4))
-                    ),
-                    (
-                        Pattern {
-                            name: PatternName::NoName,
-                            value: Some(Expression::Call {
-                                caller: None,
-                                name_id: EntityIndex(11),
-                                args: vec![],
-                                block: None
-                            }),
-                            condition: None
-                        },
-                        Expression::Literal(LiteralIndex(5))
-                    )
-                ]
-            }
-        );
-    }
-
-    #[test]
-    fn test_missing_expression_after_function() {
-        let source = "
-Program:
-    x =
-";
-        let mut parser = initialize_parser(source);
-        let result = parser.parse().unwrap_err();
-
-        assert_eq!(
-            result,
-            ParserError::UnexpectedToken {
-                expected: "Expression",
-                found: TokenType::Dedent,
-                line: Some(4)
-            }
-        )
-    }
-
-    #[test]
-    fn test_invalid_arrow() {
-        let source = "
-Program:
-    x = ->
-";
-        let mut parser = initialize_parser(source);
-        let result = parser.parse().unwrap_err();
-
-        assert_eq!(
-            result,
-            ParserError::UnexpectedToken {
-                expected: "Expression",
-                found: TokenType::Arrow,
-                line: Some(3)
-            }
-        )
-    }
-
-    #[test]
-    fn test_missing_ancestor_name() {
-        let source = "
-Program:
-    implementing
-";
-        let mut parser = initialize_parser(source);
-        let result = parser.parse().unwrap_err();
-
-        assert_eq!(
-            result,
-            ParserError::UnexpectedToken {
-                expected: "Class Name",
-                found: TokenType::Endline,
-                line: Some(4)
-            }
-        )
-    }
-
-    #[test]
-    fn test_missing_pattern_value() {
-        let source = "
-Program:
-    method(x:) -> Anything =
-        x
-";
-
-        let mut parser = initialize_parser(source);
-        let result = parser.parse().unwrap_err();
-
-        assert_eq!(
-            result,
-            ParserError::UnexpectedToken {
-                expected: "Expression",
-                found: TokenType::ParenClose,
-                line: Some(3)
-            }
-        )
-    }
-
-    #[test]
-    fn test_missing_return_type() {
-        let source = "
-Program:
-    method(x: Anything) -> =
-        x
-";
-
-        let mut parser = initialize_parser(source);
-        let result = parser.parse().unwrap_err();
-
-        assert_eq!(
-            result,
-            ParserError::UnexpectedToken {
-                expected: "Expression",
-                found: TokenType::Equal,
-                line: Some(3)
-            }
-        )
-    }
-
-    #[test]
-    fn test_missing_indent() {
-        let source = "
-Program:
-method() = 8";
-
-        let mut parser = initialize_parser(source);
-        let result = parser.parse().unwrap_err();
-
-        assert_eq!(
-            result,
-            ParserError::UnexpectedToken {
-                expected: "Indendation start",
-                found: TokenType::Identifier,
-                line: Some(3)
-            }
-        )
-    }
-
-    #[test]
-    fn test_armless_match_expr() {
-        let source = "
-match x:
-";
-        let mut parser = initialize_parser(source);
-        let result = parser.expression().unwrap_err();
-
-        assert_eq!(
-            result,
-            ParserError::UnexpectedToken {
-                expected: "Indendation start",
-                found: TokenType::Eof,
-                line: None
-            }
-        )
-    }
-
-    #[test]
-    fn test_patternless_arm_in_match() {
-        let source = "
-match x:
-    -> 666
-";
-        let mut parser = initialize_parser(source);
-        let result = parser.expression().unwrap_err();
-
-        assert_eq!(
-            result,
-            ParserError::UnexpectedToken {
-                expected: "Expression",
-                found: TokenType::Arrow,
-                line: Some(3)
-            }
-        )
-    }
-
-    #[test]
-    fn test_state_without_paran_close() {
-        let source = "
-Program:
-    Connected(
-";
-
-        let mut parser = initialize_parser(source);
-        let result = parser.expression().unwrap_err();
-
-        assert_eq!(
-            result,
-            ParserError::UnexpectedToken {
-                expected: "Expression",
-                found: TokenType::Endline,
-                line: Some(4)
-            }
-        )
-    }
-
-    #[test]
-    fn test_state_with_missing_value() {
-        let source = "
-Program:
-    Connected(x:)
-";
-
-        let mut parser = initialize_parser(source);
-        let result = parser.expression().unwrap_err();
-
-        assert_eq!(
-            result,
-            ParserError::UnexpectedToken {
-                expected: "Expression",
-                found: TokenType::ParenClose,
-                line: Some(3)
-            }
-        )
-    }
-
-    #[test]
-    fn test_basic_state_declarations() {
-        let source = "
-Connection:
-    Connected
-    Disconnected
-    Error(String)
-    DetailedError(code: Integer, message: String)
-";
-
-        let mut parser = initialize_parser(source);
-        parser.parse().unwrap();
-
-        let expected_states = vec![
-            Statement::ClassState {
-                name: EntityIndex(2), // Connected
-                patterns: vec![],
-            },
-            Statement::ClassState {
-                name: EntityIndex(3), // Disconnected
-                patterns: vec![],
-            },
-            Statement::ClassState {
-                name: EntityIndex(4), // Error
-                patterns: vec![Pattern {
-                    name: PatternName::NoName,
-                    value: Some(Expression::Call {
-                        caller: None,
-                        name_id: EntityIndex(5),
-                        args: vec![],
-                        block: None,
-                    }),
-                    condition: None,
-                }],
-            },
-            Statement::ClassState {
-                name: EntityIndex(6), // DetailedError
-                patterns: vec![
-                    Pattern {
-                        name: PatternName::Name(EntityIndex(7)), // code
-                        value: Some(Expression::Call {
-                            caller: None,
-                            name_id: EntityIndex(8),
-                            args: vec![],
-                            block: None,
-                        }),
-                        condition: None,
-                    },
-                    Pattern {
-                        name: PatternName::Name(EntityIndex(9)), // message
-                        value: Some(Expression::Call {
-                            caller: None,
-                            name_id: EntityIndex(10),
-                            args: vec![],
-                            block: None,
-                        }),
-                        condition: None,
-                    },
-                ],
-            },
-        ];
-
-        assert_eq!(
-            parser.classes.get(&EntityIndex(1)).unwrap().states,
-            expected_states
-        );
-    }
-
-    #[test]
-    fn test_state_with_methods_and_self_params() {
-        use Expression::{Block, Call, ClassSelf, Match};
-        let source = r#"
-Connection:
-    Connected(socket: Socket)
-    Disconnected
-
-    disconnect -> Disconnected = 
-        match self:
-            Connected(socket) ->
-                socket.close
-                Disconnected
-            Disconnected -> Disconnected
-
-    connect(self: Disconnected, socket: Socket) -> Connected =
-        Connected(socket)
-"#;
-
-        let mut parser = initialize_parser(source);
-        parser.parse().unwrap();
-        let class = parser.classes.get(&EntityIndex(1)).unwrap();
-
-        let methods = &class.methods;
-        let disconnect_method = &methods.get(&EntityIndex(6)).unwrap()[0]; // disconnect
-        let connect_method = &methods.get(&EntityIndex(8)).unwrap()[0]; // connect
-
-        assert_eq!(
-            disconnect_method.body,
-            Match {
-                scrutinee: Box::new(ClassSelf),
-                arms: vec![
-                    (
-                        Pattern {
-                            name: PatternName::NoName,
-                            value: Some(Call {
-                                name_id: EntityIndex(2),
-                                caller: None,
-                                block: None,
-                                args: vec![Pattern {
-                                    name: PatternName::NoName,
-                                    value: Some(Expression::Call {
-                                        caller: None,
-                                        name_id: EntityIndex(666),
-                                        args: vec![],
-                                        block: None
-                                    }),
-                                    condition: None
-                                }]
-                            }),
-                            condition: None
-                        },
-                        Block {
-                            expressions: vec![Call {
-                                name_id: EntityIndex(7),
-                                caller: Some(Box::new(Expression::Call {
-                                    caller: None,
-                                    name_id: EntityIndex(666),
-                                    args: vec![],
-                                    block: None
-                                })),
-                                args: vec![],
-                                block: None
-                            }],
-                            value: Box::new(Expression::Call {
-                                caller: None,
-                                name_id: EntityIndex(666),
-                                args: vec![],
-                                block: None
-                            }),
-                            params: vec![]
-                        }
-                    ),
-                    (
-                        Pattern {
-                            name: PatternName::NoName,
-                            value: Some(Expression::Call {
-                                caller: None,
-                                name_id: EntityIndex(666),
-                                args: vec![],
-                                block: None
-                            }),
-                            condition: None
-                        },
-                        Expression::Call {
-                            caller: None,
-                            name_id: EntityIndex(666),
-                            args: vec![],
-                            block: None
-                        }
-                    )
-                ]
-            }
-        );
-
-        assert_eq!(
-            connect_method.body,
-            Call {
-                name_id: EntityIndex(2),
-                caller: None,
-                block: None,
-                args: vec![Pattern {
-                    name: PatternName::NoName,
-                    value: Some(Expression::Call {
-                        caller: None,
-                        name_id: EntityIndex(666),
-                        args: vec![],
-                        block: None
-                    }),
-                    condition: None
-                }]
-            }
-        );
-
-        assert_eq!(
-            connect_method.params[0],
-            Pattern {
-                name: PatternName::ClassSelf,
-                value: Some(Expression::Call {
-                    caller: None,
-                    name_id: EntityIndex(666),
-                    args: vec![],
-                    block: None
-                }),
-                condition: None
-            }
-        );
-
-        assert_eq!(
-            connect_method.params[1],
-            Pattern {
-                name: PatternName::Name(EntityIndex(3)),
-                value: Some(Expression::Call {
-                    caller: None,
-                    name_id: EntityIndex(666),
-                    args: vec![],
-                    block: None
-                }),
-                condition: None
-            }
-        );
-
-        assert_eq!(
-            disconnect_method.return_type,
-            Some(Expression::Call {
-                caller: None,
-                name_id: EntityIndex(666),
-                args: vec![],
-                block: None
-            })
-        );
-
-        assert_eq!(
-            connect_method.return_type,
-            Some(Expression::Call {
-                caller: None,
-                name_id: EntityIndex(666),
-                args: vec![],
-                block: None
-            })
-        );
-    }
-
-    #[test]
-    fn test_state_with_inline_methods() {
-        let source = r#"
-Counter:
-    Active(count: Integer)
-    Inactive
-
-    increment -> Active = Active(self.count + 1)
-    reset -> Inactive = Inactive()
-    start -> Active = Active(count)
-"#;
-
-        let mut parser = initialize_parser(source);
-        parser.parse().unwrap();
-        let class = parser.classes.get(&EntityIndex(1)).unwrap();
-
-        // Be sure about method definitions are true
-        let methods = &class.methods;
-        assert!(methods.contains_key(&EntityIndex(6))); // increment
-        assert!(methods.contains_key(&EntityIndex(7))); // reset
-        assert!(methods.contains_key(&EntityIndex(8))); // start
-    }
-
-    #[test]
-    fn test_literal_return_types() {
-        let source = r#"
-Calculator:
-    Ready
-    
-    get_zero -> 0 = 0
-    get_empty -> [] = []
-    get_entity -> "Calculator" = "Calculator"
-"#;
-
-        let mut parser = initialize_parser(source);
-        parser.parse().unwrap();
-        let class = parser.classes.get(&EntityIndex(1)).unwrap();
-
-        let methods = &class.methods;
-
-        let get_zero = &methods.get(&EntityIndex(3)).unwrap()[0];
-        assert_eq!(
-            get_zero.return_type,
-            Some(Expression::Literal(LiteralIndex(0)))
-        );
-
-        let get_empty = &methods.get(&EntityIndex(4)).unwrap()[0];
-        assert_eq!(
-            get_empty.return_type,
-            Some(Expression::Literal(LiteralIndex(2)))
-        );
-
-        let get_entity = &methods.get(&EntityIndex(5)).unwrap()[0];
-        assert_eq!(
-            get_entity.return_type,
-            Some(Expression::Literal(LiteralIndex(4)))
-        );
-    }
-
-    #[test]
-    fn test_empty_file() {
-        let source = "";
-        let mut parser = initialize_parser(source);
-        let result = parser.parse();
-
-        assert!(result.is_ok());
-        assert!(parser.classes.is_empty());
-    }
-
-    #[test]
-    fn test_only_comments() {
-        let source = "# This is a comment";
-        let mut parser = initialize_parser(source);
-        let result = parser.parse();
-
-        assert!(result.is_ok());
-        assert!(parser.classes.is_empty());
     }
 }

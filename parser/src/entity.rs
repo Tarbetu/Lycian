@@ -59,17 +59,38 @@ pub enum EntityKind {
     Call,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Entity {
+    pub index: EntityIndex,
     pub name: String,
     pub visibility: Visibility,
     pub kind: EntityKind,
     pub sub_entities: Vec<EntityIndex>,
 }
 
+impl Entity {
+    fn get_sub_entities<'a>(&'a self, table: &'a EntityTable) -> Vec<&'a Entity> {
+        self.sub_entities
+            .iter()
+            .map(|index| &table[index])
+            .collect()
+    }
+
+    pub fn find_sub_entity_by_name<'a>(
+        &'a self,
+        table: &'a EntityTable,
+        name: &str,
+    ) -> Option<&'a Entity> {
+        self.get_sub_entities(table)
+            .into_iter()
+            .find(|entity| entity.name == name)
+    }
+}
+
 impl Default for Entity {
     fn default() -> Self {
         Self {
+            index: EntityIndex(0),
             name: "Program".to_string(),
             visibility: Visibility::Public,
             kind: EntityKind::Global,

@@ -16,6 +16,8 @@ pub enum ParserError {
     ErrorWithMessage(Box<ParserError>, &'static str),
     UnexpectedBlockParams(usize, &'static str),
     UnexpectedBlock(usize, TokenType),
+    DuplicateClass(String, usize),
+    DuplicateLocal(String, usize),
 }
 
 impl Display for ParserError {
@@ -61,6 +63,16 @@ impl Display for ParserError {
             }
             UnexpectedBlock(line, token_type) => {
                 write!(f, "[{}] Unexpected block for {}", line, token_type)
+            }
+            DuplicateClass(class_name, line) => {
+                write!(f, "[{}] Class {} already defined", line, class_name)
+            }
+            DuplicateLocal(class_name, line) => {
+                write!(
+                    f,
+                    "[{}] {} already defined, you can not redefine or overload locals",
+                    line, class_name
+                )
             }
         }
     }
