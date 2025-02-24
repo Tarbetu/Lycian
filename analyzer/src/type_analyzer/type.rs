@@ -1,6 +1,6 @@
-use parser::{LiteralIndex, NameIndex};
+use parser::{EntityIndex, LiteralIndex};
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct TypeIndex(pub usize);
 
 impl From<usize> for TypeIndex {
@@ -11,25 +11,27 @@ impl From<usize> for TypeIndex {
 
 pub enum Type {
     Class {
-        name: NameIndex,
-        parents: Vec<TypeIndex>,
-    },
-    ClassState {
-        class_id: TypeIndex,
-        state_name: NameIndex,
-        arguments: Vec<TypeIndex>,
+        entity: EntityIndex,
+        ancestors: Vec<TypeIndex>,
+        states: Vec<ClassState>,
     },
     Function {
         parameters: Vec<TypeIndex>,
-        return_type: Box<TypeIndex>,
+        return_type: TypeIndex,
     },
     FunctionApplication {
-        function: Box<TypeIndex>,
+        function: TypeIndex,
         arguments: Vec<TypeIndex>,
     },
     Literal(LiteralIndex),
     Primitive(PrimitiveType),
     Special(SpecialType),
+}
+
+pub struct ClassState {
+    class_id: TypeIndex,
+    state_entity: EntityIndex,
+    arguments: Vec<TypeIndex>,
 }
 
 pub enum PrimitiveType {

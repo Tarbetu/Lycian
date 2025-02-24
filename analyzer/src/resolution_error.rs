@@ -4,14 +4,6 @@ pub struct ResolutionError {
     line: usize,
 }
 
-pub enum ResolutionErrorKind {
-    // If a function don't call "yield" function
-    // while the block is given to function
-    UnexpectedBlockError,
-
-    // If a function call "yield" function
-    // while the block is not given to function
-    BlockNotGiven,
-}
+pub enum ResolutionErrorKind {}
 
 pub type ResolutionResult<T> = Result<T, ResolutionError>;
