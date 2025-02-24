@@ -1,9 +1,9 @@
 mod class;
+mod entity;
 mod error;
 mod expression;
 mod function;
 mod literal;
-mod newtypes;
 mod operator;
 mod pattern;
 mod statement;
@@ -12,14 +12,12 @@ use std::mem::swap;
 
 pub use crate::literal::*;
 pub use class::Class;
+pub use entity::*;
 pub use expression::Expression;
-pub use scopeguard::guard;
 pub use statement::Statement;
 
 pub use function::Function;
 pub use pattern::*;
-
-pub use newtypes::*;
 
 pub use error::ParserError;
 pub use error::ParserResult;
@@ -29,6 +27,10 @@ use scanner::{Token, TokenType};
 
 use ahash::AHashMap;
 use either::Either;
+pub use scopeguard::guard;
+
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Ord, Eq, Hash)]
+pub struct LiteralIndex(pub usize);
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum ParsingMode {
@@ -43,14 +45,18 @@ pub enum ParsingMode {
 }
 
 pub struct Parser<'a> {
-    pub names: AHashMap<NameIndex, Name>,
+    pub global_entity: Entity,
+    pub entities: EntityTable,
     pub literals: AHashMap<LiteralIndex, Literal>,
-    pub classes: AHashMap<NameIndex, Class>,
+    pub classes: AHashMap<EntityIndex, Class>,
     lexemes: Vec<&'a str>,
     tokens: Vec<Token>,
     position: usize,
-    current_methods: AHashMap<NameIndex, Vec<Function>>,
-    current_environment: AHashMap<NameIndex, Vec<Function>>,
+    current_class_index: EntityIndex,
+    current_declaration_index: EntityIndex,
+    current_local_index: EntityIndex,
+    current_methods: AHashMap<EntityIndex, Vec<Function>>,
+    current_environment: AHashMap<EntityIndex, Vec<Function>>,
     parsing_mode: ParsingMode,
 }
 
@@ -60,8 +66,12 @@ impl<'a> Parser<'a> {
             lexemes,
             tokens,
             position: 0,
-            names: AHashMap::new(),
+            global_entity: Entity::default(),
+            entities: EntityTable::new(),
             classes: AHashMap::new(),
+            current_class_index: EntityIndex(0),
+            current_declaration_index: EntityIndex(0),
+            current_local_index: EntityIndex(0),
             current_methods: AHashMap::new(),
             current_environment: AHashMap::new(),
             literals: AHashMap::new(),
@@ -69,8 +79,8 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn get_name(&self, index: NameIndex) -> &Name {
-        self.names.get(&index).expect("Invalid name index")
+    pub fn get_entity(&self, index: EntityIndex) -> &Entity {
+        self.entities.get(&index).expect("Invalid name index")
     }
 
     pub fn get_literal(&self, index: LiteralIndex) -> &Literal {
@@ -129,6 +139,9 @@ impl<'a> Parser<'a> {
                 };
             }
         }
+        self.current_class_index = 0.into();
+        self.current_declaration_index = 0.into();
+        self.current_local_index = 0.into();
 
         let mut methods = AHashMap::new();
         swap(&mut self.current_methods, &mut methods);
@@ -146,33 +159,38 @@ impl<'a> Parser<'a> {
         use Statement::{ClassState, Method};
         use TokenType::{Arrow, Endline, Equal, ParenClose, ParenOpen};
 
-        let decorator = self.consume_decorator()?;
+        let mut parser = guard(self, |parser| {
+            parser.current_declaration_index = 0.into();
+            parser.current_local_index = 0.into();
+        });
 
-        let name = self.consume_name()?;
+        let decorator = parser.consume_decorator()?;
 
-        let patterns = if self.is_match(&[ParenOpen]) {
-            self.pattern_list(ParenClose, "Closing Paranthesis", PatternType::Argument)?
+        let name = parser.consume_declaration_name()?;
+
+        let patterns = if parser.is_match(&[ParenOpen]) {
+            parser.pattern_list(ParenClose, "Closing Paranthesis", PatternType::Argument)?
         } else {
             vec![]
         };
 
-        if self.is_match(&[Endline]) {
+        if parser.is_match(&[Endline]) {
             Ok(Some(ClassState { name, patterns }))
         } else {
-            let return_type = if self.is_match(&[Arrow]) {
-                Some(self.or()?)
+            let return_type = if parser.is_match(&[Arrow]) {
+                Some(parser.or()?)
             } else {
                 None
             };
 
-            self.consume(Equal, "Equal sign")?;
+            parser.consume(Equal, "Equal sign")?;
 
-            let body = self.block(false, Some("Method Definition"))?;
+            let body = parser.block(false, Some("Method Definition"))?;
 
             let mut environment = AHashMap::new();
-            swap(&mut self.current_environment, &mut environment);
+            swap(&mut parser.current_environment, &mut environment);
 
-            self.push_method(name, patterns, return_type, body, environment, decorator);
+            parser.push_method(name, patterns, return_type, body, environment, decorator);
             Ok(Some(Method(name)))
         }
     }
@@ -335,27 +353,36 @@ impl<'a> Parser<'a> {
 
     fn function(&mut self) -> ParserResult<Expression> {
         use TokenType::*;
+        let mut parser = guard(self, |parser| parser.current_local_index = 0.into());
 
-        let name_token = self.peek();
-        let mut expr = self.lambda()?;
-        let params = if self.is_match(&[ParenOpen]) {
-            self.pattern_list(ParenClose, "Closing Paranthesis", PatternType::Parameter)?
+        let name_token = parser.peek();
+        let mut expr = parser.lambda()?;
+        let params = if parser.is_match(&[ParenOpen]) {
+            parser.pattern_list(ParenClose, "Closing Paranthesis", PatternType::Parameter)?
         } else {
             vec![]
         };
 
-        let return_type = if self.parsing_mode == ParsingMode::Normal && self.is_match(&[Arrow]) {
-            Some(self.or()?)
+        let return_type = if parser.parsing_mode == ParsingMode::Normal && parser.is_match(&[Arrow])
+        {
+            Some(parser.or()?)
         } else {
             None
         };
 
-        if self.is_match(&[Equal]) {
-            let value = self.block(false, Some("Function Definition"))?;
+        if parser.is_match(&[Equal]) {
+            let value = parser.block(false, Some("Function Definition"))?;
 
-            let name = self.consume_name_from_token(name_token, "Function Name")?;
+            let Some(name_token) = name_token else {
+                return Err(ParserError::UnexpectedToken {
+                    expected: "Local Name",
+                    found: TokenType::Eof,
+                    line: None,
+                });
+            };
+            let name = parser.consume_local_name(name_token)?;
 
-            self.push_function(name, params, return_type, value, String::new());
+            parser.push_function(name, params, return_type, value, String::new());
 
             expr = Expression::Function(name);
         }
@@ -639,7 +666,7 @@ impl<'a> Parser<'a> {
         } else if self.is_match(&[Constant, Identifier, Wildcard]) {
             Expression::Call {
                 // It's expensive to allocate names for every call
-                name_id: self.consume_name_from_token(Some(self.previous()), "CallRoot")?,
+                name_id: self.consume_call_name(self.previous())?,
                 block: None,
                 caller: None,
                 args: vec![],
@@ -786,41 +813,63 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    fn consume_class_name(&mut self) -> ParserResult<NameIndex> {
+    fn consume_class_name(&mut self) -> ParserResult<EntityIndex> {
         self.advance();
-        self.consume_name_from_token(Some(self.previous()), "Class Name")
+        let name = self.create_entity(self.previous(), EntityKind::Class, "Class Name")?;
+        let name_index = EntityIndex(self.entities.len());
+        self.entities.insert(name_index, name);
+        self.global_entity.sub_entities.push(name_index);
+        self.current_class_index = name_index;
+        Ok(name_index)
     }
 
-    fn consume_name(&mut self) -> ParserResult<NameIndex> {
+    fn consume_declaration_name(&mut self) -> ParserResult<EntityIndex> {
         self.advance();
-        self.consume_name_from_token(Some(self.previous()), "Name")
+        let name =
+            self.create_entity(self.previous(), EntityKind::Declaration, "Declaration Name")?;
+        let name_index = EntityIndex(self.entities.len());
+        let Some(class_entity) = self.entities.get_mut(&self.current_class_index) else {
+            panic!(
+                "Current Class Index {:?} doesn't exist!",
+                self.current_class_index
+            )
+        };
+        class_entity.sub_entities.push(name_index);
+        self.entities.insert(name_index, name);
+        self.current_declaration_index = name_index;
+        Ok(name_index)
     }
 
-    fn consume_name_from_token(
-        &mut self,
-        token: Option<Token>,
-        expected: &'static str,
-    ) -> ParserResult<NameIndex> {
-        use ParserError::UnexpectedToken;
-        use TokenType::{Constant, Identifier, Wildcard};
+    fn consume_local_name(&mut self, token: Token) -> ParserResult<EntityIndex> {
+        let name = self.create_entity(token, EntityKind::Local, "Local Name")?;
+        let name_index = EntityIndex(self.entities.len());
+        let Some(declaration_entity) = self.entities.get_mut(&self.current_declaration_index)
+        else {
+            panic!(
+                "Current Declaration Index {:?} doesn't exist!",
+                self.current_declaration_index
+            )
+        };
+        declaration_entity.sub_entities.push(name_index);
+        self.entities.insert(name_index, name);
+        self.current_local_index = name_index;
+        Ok(name_index)
+    }
 
-        match token {
-            Some(token)
-                if token.kind == Constant || token.kind == Identifier || token.kind == Wildcard =>
-            {
-                Ok(self.push_name(&token))
-            }
-            Some(token) => Err(UnexpectedToken {
-                expected,
-                found: token.kind,
-                line: Some(token.line),
-            }),
-            None => Err(UnexpectedToken {
-                expected,
-                found: TokenType::Eof,
-                line: None,
-            }),
-        }
+    fn consume_call_name(&mut self, token: Token) -> ParserResult<EntityIndex> {
+        let name = self.create_entity(token, EntityKind::Call, "CallRoot")?;
+        let name_index = EntityIndex(self.entities.len());
+        let index = if self.current_local_index == EntityIndex(0) {
+            self.current_declaration_index
+        } else {
+            self.current_local_index
+        };
+        let Some(entity) = self.entities.get_mut(&index) else {
+            panic!("Current Index {:?} doesn't exist!", index)
+        };
+        entity.sub_entities.push(name_index);
+        self.entities.insert(name_index, name);
+        Ok(name_index)
     }
 
     fn consume_decorator(&mut self) -> ParserResult<String> {
@@ -838,31 +887,32 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn push_name(&mut self, token: &Token) -> NameIndex {
+    fn create_entity(
+        &mut self,
+        token: Token,
+        kind: EntityKind,
+        expected: &'static str,
+    ) -> ParserResult<Entity> {
+        use ParserError::UnexpectedToken;
         use TokenType::{Constant, Identifier, Wildcard};
 
-        let string = self.lexemes[token.start..token.end].join("");
+        match token.kind {
+            Constant | Identifier | Wildcard => {
+                let name = self.lexemes[token.start..token.end].join("");
+                let visibility = Visibility::from(token.kind);
 
-        let name = match token.kind {
-            Constant => Name::Public(string),
-            Identifier => Name::Protected(string),
-            Wildcard => Name::Private(string),
-            _ => unreachable!(),
-        };
-
-        if name.as_ref() == "Main" {
-            NameIndex(0)
-        } else {
-            let next_index = self
-                .names
-                .keys()
-                .max()
-                .map(|index| NameIndex(index.0 + 1))
-                .unwrap_or(NameIndex(1));
-
-            self.names.insert(next_index, name);
-
-            next_index
+                Ok(Entity {
+                    name,
+                    visibility,
+                    kind,
+                    sub_entities: vec![],
+                })
+            }
+            _ => Err(UnexpectedToken {
+                expected,
+                found: token.kind,
+                line: Some(token.line),
+            }),
         }
     }
 
@@ -880,11 +930,11 @@ impl<'a> Parser<'a> {
 
     fn push_method(
         &mut self,
-        name: NameIndex,
+        name: EntityIndex,
         params: Vec<Pattern>,
         return_type: Option<Expression>,
         body: Expression,
-        environment: AHashMap<NameIndex, Vec<Function>>,
+        environment: AHashMap<EntityIndex, Vec<Function>>,
         decorator: String,
     ) {
         let function = Function {
@@ -904,7 +954,7 @@ impl<'a> Parser<'a> {
 
     fn push_function(
         &mut self,
-        name: NameIndex,
+        name: EntityIndex,
         params: Vec<Pattern>,
         return_type: Option<Expression>,
         body: Expression,
@@ -1053,8 +1103,8 @@ Program:
 
         let result = parse(source);
         assert_eq!(
-            result.get_name(NameIndex(1)),
-            &Name::Public("Program".to_string())
+            result.get_entity(EntityIndex(1)),
+            &Entity::Public("Program".to_string())
         );
         assert_eq!(
             result.get_literal(LiteralIndex(0)),
@@ -1062,10 +1112,10 @@ Program:
         );
         let main_method = result
             .classes
-            .get(&NameIndex(1))
+            .get(&EntityIndex(1))
             .unwrap()
             .methods
-            .get(&NameIndex(0))
+            .get(&EntityIndex(0))
             .map(|methods| methods.first().unwrap())
             .unwrap();
         assert_eq!(main_method.params, vec![]);
@@ -1084,8 +1134,8 @@ Program:
 
         let result = parse(source);
         assert_eq!(
-            result.get_name(NameIndex(1)),
-            &Name::Public("Program".to_string())
+            result.get_entity(EntityIndex(1)),
+            &Entity::Public("Program".to_string())
         );
         assert_eq!(
             result.get_literal(LiteralIndex(2)),
@@ -1093,10 +1143,10 @@ Program:
         );
         let main_method = result
             .classes
-            .get(&NameIndex(1))
+            .get(&EntityIndex(1))
             .unwrap()
             .methods
-            .get(&NameIndex(0))
+            .get(&EntityIndex(0))
             .map(|methods| methods.first().unwrap())
             .unwrap();
         assert_eq!(main_method.params, vec![]);
@@ -1355,7 +1405,7 @@ Program:
         assert_eq!(
             result,
             Expression::Call {
-                name_id: NameIndex(1),
+                name_id: EntityIndex(1),
                 block: None,
                 args: vec![],
                 caller: None
@@ -1371,7 +1421,7 @@ Program:
         assert_eq!(
             result,
             Expression::Call {
-                name_id: NameIndex(1),
+                name_id: EntityIndex(1),
                 block: None,
                 args: vec![],
                 caller: None
@@ -1387,7 +1437,7 @@ Program:
         assert_eq!(
             result,
             Expression::Call {
-                name_id: NameIndex(1),
+                name_id: EntityIndex(1),
                 block: None,
                 args: vec![Pattern {
                     value: Some(Expression::Literal(LiteralIndex(0))),
@@ -1412,9 +1462,9 @@ call:
         assert_eq!(
             result,
             Call {
-                name_id: NameIndex(1),
+                name_id: EntityIndex(1),
                 block: Some(Box::new(Call {
-                    name_id: NameIndex(2),
+                    name_id: EntityIndex(2),
                     block: None,
                     args: vec![],
                     caller: None
@@ -1435,12 +1485,12 @@ call:
             result,
             Call {
                 caller: Some(Box::new(Call {
-                    name_id: NameIndex(1),
+                    name_id: EntityIndex(1),
                     block: None,
                     args: vec![],
                     caller: None
                 })),
-                name_id: NameIndex(2),
+                name_id: EntityIndex(2),
                 args: vec![],
                 block: None
             }
@@ -1457,12 +1507,12 @@ call:
             result,
             Call {
                 caller: Some(Box::new(Call {
-                    name_id: NameIndex(1),
+                    name_id: EntityIndex(1),
                     block: None,
                     args: vec![],
                     caller: None
                 })),
-                name_id: NameIndex(2),
+                name_id: EntityIndex(2),
                 args: vec![],
                 block: None
             }
@@ -1479,12 +1529,12 @@ call:
             result,
             Call {
                 caller: Some(Box::new(Call {
-                    name_id: NameIndex(1),
+                    name_id: EntityIndex(1),
                     block: None,
                     args: vec![],
                     caller: None
                 })),
-                name_id: NameIndex(2),
+                name_id: EntityIndex(2),
                 args: vec![],
                 block: None
             }
@@ -1496,17 +1546,17 @@ call:
         let mut parser = initialize_parser("result = 0 * 2");
         let result = parser.expression().unwrap();
 
-        assert_eq!(result, Expression::Function(NameIndex(2)));
+        assert_eq!(result, Expression::Function(EntityIndex(2)));
 
         assert_eq!(
             parser
                 .current_environment
-                .get(&NameIndex(2))
+                .get(&EntityIndex(2))
                 .unwrap()
                 .first()
                 .unwrap(),
             &Function {
-                name: NameIndex(2),
+                name: EntityIndex(2),
                 params: vec![],
                 return_type: None,
                 environment: None,
@@ -1531,30 +1581,30 @@ result = [1, 2, 3, 4, 5].map: |i|
         let mut parser = initialize_parser(source);
         let result = parser.expression().unwrap();
 
-        assert_eq!(result, Expression::Function(NameIndex(5)));
+        assert_eq!(result, Expression::Function(EntityIndex(5)));
 
         assert_eq!(
             parser
                 .current_environment
-                .get(&NameIndex(5))
+                .get(&EntityIndex(5))
                 .unwrap()
                 .first()
                 .unwrap(),
             &Function {
-                name: NameIndex(5),
+                name: EntityIndex(5),
                 params: vec![],
                 return_type: None,
                 environment: None,
                 decorator: String::new(),
                 body: Call {
                     caller: Some(Box::new(Expression::Literal(LiteralIndex(0)))),
-                    name_id: NameIndex(2),
+                    name_id: EntityIndex(2),
                     args: vec![],
                     block: Some(Box::new(Block {
                         expressions: vec![],
                         value: Box::new(Expression::Binary(
                             Box::new(Call {
-                                name_id: NameIndex(4),
+                                name_id: EntityIndex(4),
                                 caller: None,
                                 args: vec![],
                                 block: None
@@ -1563,7 +1613,7 @@ result = [1, 2, 3, 4, 5].map: |i|
                             Box::new(Expression::Literal(LiteralIndex(1)))
                         )),
                         params: vec![Pattern {
-                            name: PatternName::Name(NameIndex(3)),
+                            name: PatternName::Name(EntityIndex(3)),
                             value: None,
                             condition: None
                         }]
@@ -1584,25 +1634,25 @@ Program:
         let mut parser = initialize_parser(source);
         parser.parse().unwrap();
 
-        let class = parser.classes.get(&NameIndex(1)).unwrap();
+        let class = parser.classes.get(&EntityIndex(1)).unwrap();
 
         let mut methods = AHashMap::new();
         methods.insert(
-            NameIndex(2),
+            EntityIndex(2),
             vec![Function {
-                name: NameIndex(2),
+                name: EntityIndex(2),
                 environment: Some(AHashMap::new()),
                 decorator: String::new(),
                 params: vec![Pattern {
-                    name: PatternName::Name(NameIndex(3)),
+                    name: PatternName::Name(EntityIndex(3)),
                     value: Some(Expression::Call {
-                        name_id: NameIndex(4),
+                        name_id: EntityIndex(4),
                         block: None,
                         args: vec![Pattern {
                             name: PatternName::NoName,
                             value: Some(Expression::Call {
                                 caller: None,
-                                name_id: NameIndex(5),
+                                name_id: EntityIndex(5),
                                 args: vec![],
                                 block: None,
                             }),
@@ -1613,13 +1663,13 @@ Program:
                     condition: None,
                 }],
                 return_type: Some(Expression::Call {
-                    name_id: NameIndex(6),
+                    name_id: EntityIndex(6),
                     block: None,
                     args: vec![Pattern {
                         name: PatternName::NoName,
                         value: Some(Expression::Call {
                             caller: None,
-                            name_id: NameIndex(7),
+                            name_id: EntityIndex(7),
                             args: vec![],
                             block: None,
                         }),
@@ -1628,10 +1678,10 @@ Program:
                     caller: None,
                 }),
                 body: Expression::Call {
-                    name_id: NameIndex(9),
+                    name_id: EntityIndex(9),
                     caller: Some(Box::new(Expression::Call {
                         caller: None,
-                        name_id: NameIndex(8),
+                        name_id: EntityIndex(8),
                         args: vec![],
                         block: None,
                     })),
@@ -1639,19 +1689,19 @@ Program:
                     block: Some(Box::new(Expression::Block {
                         expressions: vec![],
                         params: vec![Pattern {
-                            name: PatternName::Name(NameIndex(10)),
+                            name: PatternName::Name(EntityIndex(10)),
                             value: None,
                             condition: None,
                         }],
                         value: Box::new(Expression::Call {
                             caller: Some(Box::new(Expression::ClassSelf)),
-                            name_id: NameIndex(11),
+                            name_id: EntityIndex(11),
                             block: None,
                             args: vec![Pattern {
                                 name: PatternName::NoName,
                                 value: Some(Expression::Call {
                                     caller: None,
-                                    name_id: NameIndex(12),
+                                    name_id: EntityIndex(12),
                                     args: vec![],
                                     block: None,
                                 }),
@@ -1685,27 +1735,13 @@ Program:
         result = self.multiply_with_five([1, 2, 3, 4, 5])
         IO.print(result)
 ";
-        // Name list:
-        // 0: Main
-        // 1: Program
-        // 2: FiftiestFive
-        // 3: take_five
-        // 4: Integer
-        // 5: multiply_with_five
-        // 6: x
-        // 7: List
-        // 8: map
-        // 9: i
-        // 10: result
-        // 11: IO
-        // 12: print
 
         let mut parser = initialize_parser(source);
         parser.parse().unwrap();
 
-        let class = parser.classes.get(&NameIndex(1)).unwrap();
-        assert_eq!(class.name, NameIndex(1));
-        assert_eq!(class.ancestors, vec![NameIndex(2)]);
+        let class = parser.classes.get(&EntityIndex(1)).unwrap();
+        assert_eq!(class.name, EntityIndex(1));
+        assert_eq!(class.ancestors, vec![EntityIndex(2)]);
         assert_eq!(class.states, vec![]);
         assert_eq!(class.decorator, String::new());
 
@@ -1713,13 +1749,13 @@ Program:
 
         // take_five method
         methods.insert(
-            NameIndex(3),
+            EntityIndex(3),
             vec![Function {
-                name: NameIndex(3),
+                name: EntityIndex(3),
                 params: vec![],
                 return_type: Some(Expression::Call {
                     caller: None,
-                    name_id: NameIndex(666),
+                    name_id: EntityIndex(666),
                     args: vec![],
                     block: None,
                 }),
@@ -1731,16 +1767,16 @@ Program:
 
         // multiply_with_five method
         methods.insert(
-            NameIndex(5),
+            EntityIndex(5),
             vec![
                 // multiply_with_five(x: Integer)
                 Function {
-                    name: NameIndex(5),
+                    name: EntityIndex(5),
                     params: vec![Pattern {
-                        name: PatternName::Name(NameIndex(6)),
+                        name: PatternName::Name(EntityIndex(6)),
                         value: Some(Expression::Call {
                             caller: None,
-                            name_id: NameIndex(666),
+                            name_id: EntityIndex(666),
                             args: vec![],
                             block: None,
                         }),
@@ -1748,7 +1784,7 @@ Program:
                     }],
                     return_type: Some(Expression::Call {
                         caller: None,
-                        name_id: NameIndex(666),
+                        name_id: EntityIndex(666),
                         args: vec![],
                         block: None,
                     }),
@@ -1756,13 +1792,13 @@ Program:
                     body: Expression::Binary(
                         Box::new(Expression::Call {
                             caller: None,
-                            name_id: NameIndex(666),
+                            name_id: EntityIndex(666),
                             args: vec![],
                             block: None,
                         }),
                         Operator::Multiply,
                         Box::new(Expression::Call {
-                            name_id: NameIndex(3),
+                            name_id: EntityIndex(3),
                             block: None,
                             args: vec![],
                             caller: Some(Box::new(Expression::ClassSelf)),
@@ -1772,19 +1808,19 @@ Program:
                 },
                 // multiply_with_five(x: List(Integer))
                 Function {
-                    name: NameIndex(5),
+                    name: EntityIndex(5),
                     environment: Some(AHashMap::new()),
                     decorator: String::new(),
                     params: vec![Pattern {
-                        name: PatternName::Name(NameIndex(6)),
+                        name: PatternName::Name(EntityIndex(6)),
                         value: Some(Expression::Call {
-                            name_id: NameIndex(7),
+                            name_id: EntityIndex(7),
                             block: None,
                             args: vec![Pattern {
                                 name: PatternName::NoName,
                                 value: Some(Expression::Call {
                                     caller: None,
-                                    name_id: NameIndex(666),
+                                    name_id: EntityIndex(666),
                                     args: vec![],
                                     block: None,
                                 }),
@@ -1795,13 +1831,13 @@ Program:
                         condition: None,
                     }],
                     return_type: Some(Expression::Call {
-                        name_id: NameIndex(7),
+                        name_id: EntityIndex(7),
                         block: None,
                         args: vec![Pattern {
                             name: PatternName::NoName,
                             value: Some(Expression::Call {
                                 caller: None,
-                                name_id: NameIndex(666),
+                                name_id: EntityIndex(666),
                                 args: vec![],
                                 block: None,
                             }),
@@ -1810,22 +1846,22 @@ Program:
                         caller: None,
                     }),
                     body: Expression::Call {
-                        name_id: NameIndex(8),
+                        name_id: EntityIndex(8),
                         block: Some(Box::new(Expression::Block {
                             expressions: vec![],
                             params: vec![Pattern {
-                                name: PatternName::Name(NameIndex(9)),
+                                name: PatternName::Name(EntityIndex(9)),
                                 value: None,
                                 condition: None,
                             }],
                             value: Box::new(Expression::Call {
-                                name_id: NameIndex(5),
+                                name_id: EntityIndex(5),
                                 block: None,
                                 args: vec![Pattern {
                                     name: PatternName::NoName,
                                     value: Some(Expression::Call {
                                         caller: None,
-                                        name_id: NameIndex(666),
+                                        name_id: EntityIndex(666),
                                         args: vec![],
                                         block: None,
                                     }),
@@ -1836,7 +1872,7 @@ Program:
                         })),
                         args: vec![],
                         caller: Some(Box::new(Expression::Call {
-                            name_id: NameIndex(6),
+                            name_id: EntityIndex(6),
                             block: None,
                             args: vec![],
                             caller: None,
@@ -1848,15 +1884,15 @@ Program:
 
         let mut main_environment = AHashMap::new();
         main_environment.insert(
-            NameIndex(10),
+            EntityIndex(10),
             vec![Function {
-                name: NameIndex(10),
+                name: EntityIndex(10),
                 params: vec![],
                 return_type: None,
                 environment: None,
                 decorator: String::new(),
                 body: Expression::Call {
-                    name_id: NameIndex(5),
+                    name_id: EntityIndex(5),
                     caller: Some(Box::new(Expression::ClassSelf)),
                     args: vec![Pattern {
                         name: PatternName::NoName,
@@ -1869,21 +1905,21 @@ Program:
         );
 
         methods.insert(
-            NameIndex(0),
+            EntityIndex(0),
             vec![Function {
-                name: NameIndex(0),
+                name: EntityIndex(0),
                 params: vec![],
                 return_type: None,
                 environment: Some(main_environment),
                 body: Expression::Block {
                     value: Box::new(Expression::Call {
-                        name_id: NameIndex(12),
+                        name_id: EntityIndex(12),
                         block: None,
                         args: vec![Pattern {
                             name: PatternName::NoName,
                             value: Some(Expression::Call {
                                 caller: None,
-                                name_id: NameIndex(666),
+                                name_id: EntityIndex(666),
                                 args: vec![],
                                 block: None,
                             }),
@@ -1891,12 +1927,12 @@ Program:
                         }],
                         caller: Some(Box::new(Expression::Call {
                             caller: None,
-                            name_id: NameIndex(666),
+                            name_id: EntityIndex(666),
                             args: vec![],
                             block: None,
                         })),
                     }),
-                    expressions: vec![Expression::Function(NameIndex(10))],
+                    expressions: vec![Expression::Function(EntityIndex(10))],
                     params: vec![],
                 },
                 decorator: String::new(),
@@ -1931,7 +1967,7 @@ match x:
             Match {
                 scrutinee: Box::new(Expression::Call {
                     caller: None,
-                    name_id: NameIndex(1),
+                    name_id: EntityIndex(1),
                     args: vec![],
                     block: None
                 }),
@@ -1949,7 +1985,7 @@ match x:
                             name: PatternName::NoName,
                             value: Some(Expression::Call {
                                 caller: None,
-                                name_id: NameIndex(2),
+                                name_id: EntityIndex(2),
                                 args: vec![],
                                 block: None
                             }),
@@ -1981,24 +2017,24 @@ match x:
             Match {
                 scrutinee: Box::new(Expression::Call {
                     caller: None,
-                    name_id: NameIndex(1),
+                    name_id: EntityIndex(1),
                     args: vec![],
                     block: None
                 }),
                 arms: vec![
                     (
                         Pattern {
-                            name: PatternName::Name(NameIndex(2)),
+                            name: PatternName::Name(EntityIndex(2)),
                             value: Some(Expression::Call {
                                 caller: None,
-                                name_id: NameIndex(3),
+                                name_id: EntityIndex(3),
                                 args: vec![],
                                 block: None
                             }),
                             condition: Some(Binary(
                                 Box::new(Expression::Call {
                                     caller: None,
-                                    name_id: NameIndex(4),
+                                    name_id: EntityIndex(4),
                                     args: vec![],
                                     block: None
                                 }),
@@ -2013,14 +2049,14 @@ match x:
                             name: PatternName::NoName,
                             value: Some(Expression::Call {
                                 caller: None,
-                                name_id: NameIndex(5),
+                                name_id: EntityIndex(5),
                                 args: vec![],
                                 block: None
                             }),
                             condition: Some(Binary(
                                 Box::new(Expression::Call {
                                     caller: None,
-                                    name_id: NameIndex(6),
+                                    name_id: EntityIndex(6),
                                     args: vec![],
                                     block: None
                                 }),
@@ -2032,9 +2068,9 @@ match x:
                     ),
                     (
                         Pattern {
-                            name: PatternName::Name(NameIndex(7)),
+                            name: PatternName::Name(EntityIndex(7)),
                             value: Some(Expression::Call {
-                                name_id: NameIndex(9),
+                                name_id: EntityIndex(9),
                                 block: None,
                                 args: vec![Pattern {
                                     // Test fails in here.
@@ -2044,7 +2080,7 @@ match x:
                                     name: PatternName::NoName,
                                     value: Some(Expression::Call {
                                         caller: None,
-                                        name_id: NameIndex(10),
+                                        name_id: EntityIndex(10),
                                         args: vec![],
                                         block: None
                                     }),
@@ -2052,7 +2088,7 @@ match x:
                                 }],
                                 caller: Some(Box::new(Expression::Call {
                                     caller: None,
-                                    name_id: NameIndex(8),
+                                    name_id: EntityIndex(8),
                                     args: vec![],
                                     block: None
                                 })),
@@ -2066,7 +2102,7 @@ match x:
                             name: PatternName::NoName,
                             value: Some(Expression::Call {
                                 caller: None,
-                                name_id: NameIndex(11),
+                                name_id: EntityIndex(11),
                                 args: vec![],
                                 block: None
                             }),
@@ -2289,20 +2325,20 @@ Connection:
 
         let expected_states = vec![
             Statement::ClassState {
-                name: NameIndex(2), // Connected
+                name: EntityIndex(2), // Connected
                 patterns: vec![],
             },
             Statement::ClassState {
-                name: NameIndex(3), // Disconnected
+                name: EntityIndex(3), // Disconnected
                 patterns: vec![],
             },
             Statement::ClassState {
-                name: NameIndex(4), // Error
+                name: EntityIndex(4), // Error
                 patterns: vec![Pattern {
                     name: PatternName::NoName,
                     value: Some(Expression::Call {
                         caller: None,
-                        name_id: NameIndex(5),
+                        name_id: EntityIndex(5),
                         args: vec![],
                         block: None,
                     }),
@@ -2310,23 +2346,23 @@ Connection:
                 }],
             },
             Statement::ClassState {
-                name: NameIndex(6), // DetailedError
+                name: EntityIndex(6), // DetailedError
                 patterns: vec![
                     Pattern {
-                        name: PatternName::Name(NameIndex(7)), // code
+                        name: PatternName::Name(EntityIndex(7)), // code
                         value: Some(Expression::Call {
                             caller: None,
-                            name_id: NameIndex(8),
+                            name_id: EntityIndex(8),
                             args: vec![],
                             block: None,
                         }),
                         condition: None,
                     },
                     Pattern {
-                        name: PatternName::Name(NameIndex(9)), // message
+                        name: PatternName::Name(EntityIndex(9)), // message
                         value: Some(Expression::Call {
                             caller: None,
-                            name_id: NameIndex(10),
+                            name_id: EntityIndex(10),
                             args: vec![],
                             block: None,
                         }),
@@ -2337,7 +2373,7 @@ Connection:
         ];
 
         assert_eq!(
-            parser.classes.get(&NameIndex(1)).unwrap().states,
+            parser.classes.get(&EntityIndex(1)).unwrap().states,
             expected_states
         );
     }
@@ -2363,11 +2399,11 @@ Connection:
 
         let mut parser = initialize_parser(source);
         parser.parse().unwrap();
-        let class = parser.classes.get(&NameIndex(1)).unwrap();
+        let class = parser.classes.get(&EntityIndex(1)).unwrap();
 
         let methods = &class.methods;
-        let disconnect_method = &methods.get(&NameIndex(6)).unwrap()[0]; // disconnect
-        let connect_method = &methods.get(&NameIndex(8)).unwrap()[0]; // connect
+        let disconnect_method = &methods.get(&EntityIndex(6)).unwrap()[0]; // disconnect
+        let connect_method = &methods.get(&EntityIndex(8)).unwrap()[0]; // connect
 
         assert_eq!(
             disconnect_method.body,
@@ -2378,14 +2414,14 @@ Connection:
                         Pattern {
                             name: PatternName::NoName,
                             value: Some(Call {
-                                name_id: NameIndex(2),
+                                name_id: EntityIndex(2),
                                 caller: None,
                                 block: None,
                                 args: vec![Pattern {
                                     name: PatternName::NoName,
                                     value: Some(Expression::Call {
                                         caller: None,
-                                        name_id: NameIndex(666),
+                                        name_id: EntityIndex(666),
                                         args: vec![],
                                         block: None
                                     }),
@@ -2396,10 +2432,10 @@ Connection:
                         },
                         Block {
                             expressions: vec![Call {
-                                name_id: NameIndex(7),
+                                name_id: EntityIndex(7),
                                 caller: Some(Box::new(Expression::Call {
                                     caller: None,
-                                    name_id: NameIndex(666),
+                                    name_id: EntityIndex(666),
                                     args: vec![],
                                     block: None
                                 })),
@@ -2408,7 +2444,7 @@ Connection:
                             }],
                             value: Box::new(Expression::Call {
                                 caller: None,
-                                name_id: NameIndex(666),
+                                name_id: EntityIndex(666),
                                 args: vec![],
                                 block: None
                             }),
@@ -2420,7 +2456,7 @@ Connection:
                             name: PatternName::NoName,
                             value: Some(Expression::Call {
                                 caller: None,
-                                name_id: NameIndex(666),
+                                name_id: EntityIndex(666),
                                 args: vec![],
                                 block: None
                             }),
@@ -2428,7 +2464,7 @@ Connection:
                         },
                         Expression::Call {
                             caller: None,
-                            name_id: NameIndex(666),
+                            name_id: EntityIndex(666),
                             args: vec![],
                             block: None
                         }
@@ -2440,14 +2476,14 @@ Connection:
         assert_eq!(
             connect_method.body,
             Call {
-                name_id: NameIndex(2),
+                name_id: EntityIndex(2),
                 caller: None,
                 block: None,
                 args: vec![Pattern {
                     name: PatternName::NoName,
                     value: Some(Expression::Call {
                         caller: None,
-                        name_id: NameIndex(666),
+                        name_id: EntityIndex(666),
                         args: vec![],
                         block: None
                     }),
@@ -2462,7 +2498,7 @@ Connection:
                 name: PatternName::ClassSelf,
                 value: Some(Expression::Call {
                     caller: None,
-                    name_id: NameIndex(666),
+                    name_id: EntityIndex(666),
                     args: vec![],
                     block: None
                 }),
@@ -2473,10 +2509,10 @@ Connection:
         assert_eq!(
             connect_method.params[1],
             Pattern {
-                name: PatternName::Name(NameIndex(3)),
+                name: PatternName::Name(EntityIndex(3)),
                 value: Some(Expression::Call {
                     caller: None,
-                    name_id: NameIndex(666),
+                    name_id: EntityIndex(666),
                     args: vec![],
                     block: None
                 }),
@@ -2488,7 +2524,7 @@ Connection:
             disconnect_method.return_type,
             Some(Expression::Call {
                 caller: None,
-                name_id: NameIndex(666),
+                name_id: EntityIndex(666),
                 args: vec![],
                 block: None
             })
@@ -2498,7 +2534,7 @@ Connection:
             connect_method.return_type,
             Some(Expression::Call {
                 caller: None,
-                name_id: NameIndex(666),
+                name_id: EntityIndex(666),
                 args: vec![],
                 block: None
             })
@@ -2519,13 +2555,13 @@ Counter:
 
         let mut parser = initialize_parser(source);
         parser.parse().unwrap();
-        let class = parser.classes.get(&NameIndex(1)).unwrap();
+        let class = parser.classes.get(&EntityIndex(1)).unwrap();
 
         // Be sure about method definitions are true
         let methods = &class.methods;
-        assert!(methods.contains_key(&NameIndex(6))); // increment
-        assert!(methods.contains_key(&NameIndex(7))); // reset
-        assert!(methods.contains_key(&NameIndex(8))); // start
+        assert!(methods.contains_key(&EntityIndex(6))); // increment
+        assert!(methods.contains_key(&EntityIndex(7))); // reset
+        assert!(methods.contains_key(&EntityIndex(8))); // start
     }
 
     #[test]
@@ -2536,30 +2572,30 @@ Calculator:
     
     get_zero -> 0 = 0
     get_empty -> [] = []
-    get_name -> "Calculator" = "Calculator"
+    get_entity -> "Calculator" = "Calculator"
 "#;
 
         let mut parser = initialize_parser(source);
         parser.parse().unwrap();
-        let class = parser.classes.get(&NameIndex(1)).unwrap();
+        let class = parser.classes.get(&EntityIndex(1)).unwrap();
 
         let methods = &class.methods;
 
-        let get_zero = &methods.get(&NameIndex(3)).unwrap()[0];
+        let get_zero = &methods.get(&EntityIndex(3)).unwrap()[0];
         assert_eq!(
             get_zero.return_type,
             Some(Expression::Literal(LiteralIndex(0)))
         );
 
-        let get_empty = &methods.get(&NameIndex(4)).unwrap()[0];
+        let get_empty = &methods.get(&EntityIndex(4)).unwrap()[0];
         assert_eq!(
             get_empty.return_type,
             Some(Expression::Literal(LiteralIndex(2)))
         );
 
-        let get_name = &methods.get(&NameIndex(5)).unwrap()[0];
+        let get_entity = &methods.get(&EntityIndex(5)).unwrap()[0];
         assert_eq!(
-            get_name.return_type,
+            get_entity.return_type,
             Some(Expression::Literal(LiteralIndex(4)))
         );
     }
