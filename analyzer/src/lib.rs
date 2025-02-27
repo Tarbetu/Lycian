@@ -33,7 +33,7 @@ impl AnalysisPipeline {
         }
     }
 
-    fn analyze_types(&self) -> ResolutionResult<TypeRegistry> {
-        TypeAnalyzer::new(&self).analyze()
+    pub fn analyze_types(&self) -> ResolutionResult<TypeRegistry> {
+        TypeAnalyzer::new(self).analyze()
     }
 }

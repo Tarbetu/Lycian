@@ -1,27 +1,18 @@
 use parser::{EntityIndex, LiteralIndex};
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub struct TypeIndex(pub usize);
-
-impl From<usize> for TypeIndex {
-    fn from(index: usize) -> TypeIndex {
-        TypeIndex(index)
-    }
-}
-
 pub enum Type {
     Class {
         entity: EntityIndex,
-        ancestors: Vec<TypeIndex>,
+        ancestors: Vec<EntityIndex>,
         states: Vec<ClassState>,
     },
     Function {
-        parameters: Vec<TypeIndex>,
-        return_type: TypeIndex,
+        parameters: Vec<EntityIndex>,
+        return_type: EntityIndex,
     },
     FunctionApplication {
-        function: TypeIndex,
-        arguments: Vec<TypeIndex>,
+        function: EntityIndex,
+        arguments: Vec<EntityIndex>,
     },
     Literal(LiteralIndex),
     Primitive(PrimitiveType),
@@ -29,9 +20,9 @@ pub enum Type {
 }
 
 pub struct ClassState {
-    class_id: TypeIndex,
+    class_id: EntityIndex,
     state_entity: EntityIndex,
-    arguments: Vec<TypeIndex>,
+    arguments: Vec<EntityIndex>,
 }
 
 pub enum PrimitiveType {
@@ -53,12 +44,12 @@ pub enum PrimitiveType {
     Uint128,
     BigInteger, // We haven't implemented this yet, so this is a sign of error
     BigFloat,   // Same with BigInteger
-    List(TypeIndex),
-    Map(TypeIndex, TypeIndex),
+    List(EntityIndex),
+    Map(EntityIndex, EntityIndex),
     // Static list is a compile time array
     // And this can not distingushed from a normal array
     // for the programmer
-    StaticList(TypeIndex, usize),
+    StaticList(EntityIndex, usize),
 }
 
 /// This category is representing the state changes of the program or the special cases

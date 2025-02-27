@@ -1,7 +1,7 @@
 pub struct ResolutionError {
-    source: &'static str,
-    kind: ResolutionErrorKind,
-    line: usize,
+    pub source: &'static str,
+    pub kind: ResolutionErrorKind,
+    pub line: usize,
 }
 
 pub enum ResolutionErrorKind {}
