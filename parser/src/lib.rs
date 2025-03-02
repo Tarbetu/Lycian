@@ -153,6 +153,8 @@ impl<'a> Parser<'a> {
             states,
             methods,
             decorator,
+            // Line is last token's line, fix it
+            line: self.previous().line,
         })
     }
 

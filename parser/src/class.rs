@@ -7,4 +7,5 @@ pub struct Class {
     pub methods: AHashMap<EntityIndex, Vec<Function>>,
     pub states: Vec<Statement>,
     pub decorator: String,
+    pub line: usize,
 }
