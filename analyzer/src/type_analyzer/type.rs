@@ -7,6 +7,7 @@ pub enum Type {
         states: Vec<ClassState>,
     },
     Function {
+        entity: EntityIndex,
         parameters: Vec<EntityIndex>,
         return_type: EntityIndex,
     },

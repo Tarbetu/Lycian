@@ -1,8 +1,12 @@
+mod analyzer;
+mod inheritance_analyzer;
 mod resolution_error;
 mod type_analyzer;
 use parser::{Class, Entity, EntityIndex, EntityTable, Literal, LiteralIndex, Parser};
 
 use ahash::AHashMap;
+pub use analyzer::Analyzer;
+use inheritance_analyzer::InheritanceAnalyzer;
 pub use resolution_error::ResolutionError;
 pub use resolution_error::ResolutionResult;
 use type_analyzer::{TypeAnalyzer, TypeRegistry};
@@ -10,6 +14,7 @@ use type_analyzer::{TypeAnalyzer, TypeRegistry};
 /// The AnalysisPipeline struct contains all the analyzers and optimizers that are used to
 /// analyze the AST and produce a more optimized version of the AST.
 ///
+/// InheritanceAnalyzer: Detects inheritance cycles and invalid inheritance names.
 /// TypeAnalyzer: A classic for AOT compiler, type analyzer checks and deduce the types
 /// InheritanceResolver: Lycian staticly resolves inheritance and checks for cycles.
 /// ScopeResolver: Revolves the scope hierarchy and names of a program.
@@ -31,6 +36,10 @@ impl AnalysisPipeline {
             literals: parser.literals,
             classes: parser.classes,
         }
+    }
+
+    pub fn analyze_inheritance(&self) -> ResolutionResult<()> {
+        InheritanceAnalyzer::new(&self.classes).analyze()
     }
 
     pub fn analyze_types(&self) -> ResolutionResult<TypeRegistry> {

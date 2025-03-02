@@ -1,25 +1,65 @@
 mod r#type;
+use crate::Analyzer;
 use crate::{AnalysisPipeline, ResolutionResult};
 use ahash::AHashMap;
 use parser::EntityIndex;
 pub use r#type::*;
+use rayon::prelude::*;
 
 pub type TypeRegistry = AHashMap<EntityIndex, Type>;
 
 pub struct TypeAnalyzer<'a> {
-    current_pipeline: &'a AnalysisPipeline,
+    pipeline: &'a AnalysisPipeline,
     type_registry: TypeRegistry,
+}
+
+impl<'a> Analyzer for TypeAnalyzer<'a> {
+    type Output = TypeRegistry;
+
+    fn analyze(self) -> ResolutionResult<TypeRegistry> {
+        self.analyze_classes(&[])
+    }
 }
 
 impl TypeAnalyzer<'_> {
     pub fn new(pipeline: &AnalysisPipeline) -> TypeAnalyzer {
         TypeAnalyzer {
-            current_pipeline: pipeline,
+            pipeline,
             type_registry: TypeRegistry::new(),
         }
     }
 
-    pub fn analyze(self) -> ResolutionResult<TypeRegistry> {
+    fn analyze_classes(self, known_classes: &[EntityIndex]) -> ResolutionResult<TypeRegistry> {
+        let sub_classes: ResolutionResult<Vec<_>> = self
+            .pipeline
+            .classes
+            .par_iter()
+            .filter_map(|(_index, class_info)| {
+                class_info
+                    .ancestors
+                    .par_iter()
+                    .all(|index| known_classes.contains(index))
+                    .then_some(self.analyze_class(class_info))
+            })
+            .collect();
+        let sub_classes = sub_classes?;
+
+        if known_classes.len() + sub_classes.len() != self.pipeline.classes.len() {
+            self.analyze_classes(&[known_classes, &sub_classes].concat())
+        } else {
+            Ok(self.type_registry)
+        }
+    }
+
+    fn analyze_class(&self, class_info: &parser::Class) -> ResolutionResult<EntityIndex> {
+        unimplemented!()
+    }
+
+    fn analyze_declaration(&self) -> ResolutionResult<EntityIndex> {
+        unimplemented!()
+    }
+
+    fn analyze_local(&self) -> ResolutionResult<EntityIndex> {
         unimplemented!()
     }
 
