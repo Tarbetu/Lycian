@@ -20,12 +20,9 @@ impl<'a> Analyzer for InheritanceAnalyzer<'a> {
         let result: Vec<InheritanceError> = self
             .classes
             .par_iter()
-            .filter_map(|(_, class)| {
-                let result =
-                    self.analyze_class(Either::Left(class), &mut AHashSet::new(), &mut Vec::new());
-                (!result.is_empty()).then_some(result)
+            .flat_map(|(_, class)| {
+                self.analyze_class(Either::Left(class), &mut AHashSet::new(), &mut Vec::new())
             })
-            .flatten()
             .collect();
 
         if result.is_empty() {
