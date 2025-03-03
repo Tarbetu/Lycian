@@ -1,36 +1,32 @@
 mod r#type;
 use crate::Analyzer;
 use crate::{AnalysisPipeline, ResolutionResult};
-use ahash::AHashMap;
-use parser::EntityIndex;
+use ahash::{HashMap, HashMapExt};
+use parser::{EntityIndex, Statement};
 pub use r#type::*;
 use rayon::prelude::*;
 
-pub type TypeRegistry = AHashMap<EntityIndex, Type>;
+pub type TypeRegistry = HashMap<EntityIndex, Type>;
 
 pub struct TypeAnalyzer<'a> {
     pipeline: &'a AnalysisPipeline,
-    type_registry: TypeRegistry,
 }
 
 impl<'a> Analyzer for TypeAnalyzer<'a> {
     type Output = TypeRegistry;
 
     fn analyze(self) -> ResolutionResult<TypeRegistry> {
-        self.analyze_classes(&[])
+        self.register_classes(&[])
     }
 }
 
 impl TypeAnalyzer<'_> {
     pub fn new(pipeline: &AnalysisPipeline) -> TypeAnalyzer {
-        TypeAnalyzer {
-            pipeline,
-            type_registry: TypeRegistry::new(),
-        }
+        TypeAnalyzer { pipeline }
     }
 
-    fn analyze_classes(self, known_classes: &[EntityIndex]) -> ResolutionResult<TypeRegistry> {
-        let sub_classes: ResolutionResult<Vec<_>> = self
+    fn register_classes(self, known_classes: &[EntityIndex]) -> ResolutionResult<TypeRegistry> {
+        let type_registry: ResolutionResult<HashMap<_, _>> = self
             .pipeline
             .classes
             .par_iter()
@@ -39,27 +35,52 @@ impl TypeAnalyzer<'_> {
                     .ancestors
                     .par_iter()
                     .all(|index| known_classes.contains(index))
-                    .then_some(self.analyze_class(class_info))
+                    .then_some(self.register_class(class_info))
             })
             .collect();
-        let sub_classes = sub_classes?;
+        let mut type_registry = type_registry?;
 
-        if known_classes.len() + sub_classes.len() != self.pipeline.classes.len() {
-            self.analyze_classes(&[known_classes, &sub_classes].concat())
-        } else {
-            Ok(self.type_registry)
+        if known_classes.len() + type_registry.len() != self.pipeline.classes.len() {
+            let known_classes: Vec<_> = type_registry
+                .keys()
+                .par_bridge()
+                .filter_map(|index| self.pipeline.classes.contains_key(index).then_some(*index))
+                .collect();
+            type_registry.par_extend(self.register_classes(&known_classes)?);
         }
+        Ok(type_registry)
     }
 
-    fn analyze_class(&self, class_info: &parser::Class) -> ResolutionResult<EntityIndex> {
+    fn register_class(&self, class_info: &parser::Class) -> ResolutionResult<(EntityIndex, Type)> {
+        let states: ResolutionResult<_> = class_info
+            .states
+            .par_iter()
+            .map(|state| self.register_state(class_info, state))
+            .collect();
+
+        Ok((
+            class_info.name,
+            Type::Class {
+                entity: class_info.name,
+                ancestors: class_info.ancestors.clone(),
+                states: states?,
+            },
+        ))
+    }
+
+    fn register_state(
+        &self,
+        class_info: &parser::Class,
+        state: &Statement,
+    ) -> ResolutionResult<ClassState> {
+        let Statement::ClassState { name, patterns } = state else {
+            panic!("Invalid state: {:?}", state)
+        };
+
         unimplemented!()
     }
 
-    fn analyze_declaration(&self) -> ResolutionResult<EntityIndex> {
-        unimplemented!()
-    }
-
-    fn analyze_local(&self) -> ResolutionResult<EntityIndex> {
+    fn register_local(&self) -> ResolutionResult<EntityIndex> {
         unimplemented!()
     }
 

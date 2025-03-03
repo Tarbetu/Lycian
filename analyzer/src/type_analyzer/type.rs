@@ -1,3 +1,12 @@
+mod class_state;
+pub use class_state::ClassState;
+mod parameter;
+pub use parameter::Parameter;
+mod primitive_type;
+pub use primitive_type::PrimitiveType;
+mod special_type;
+pub use special_type::SpecialType;
+
 use parser::{EntityIndex, LiteralIndex};
 
 pub enum Type {
@@ -8,67 +17,58 @@ pub enum Type {
     },
     Function {
         entity: EntityIndex,
-        parameters: Vec<EntityIndex>,
-        return_type: EntityIndex,
+        parameters: Vec<Parameter>,
+        return_type: Box<Type>,
     },
     FunctionApplication {
         function: EntityIndex,
-        arguments: Vec<EntityIndex>,
+        arguments: Vec<Parameter>,
     },
     Literal(LiteralIndex),
     Primitive(PrimitiveType),
     Special(SpecialType),
 }
 
-pub struct ClassState {
-    class_id: EntityIndex,
-    state_entity: EntityIndex,
-    arguments: Vec<EntityIndex>,
-}
+impl Type {
+    pub fn is_primitive(&self) -> bool {
+        matches!(self, Type::Primitive(_))
+    }
 
-pub enum PrimitiveType {
-    Bool,
-    Char,
-    Str,
-    Float32,
-    Float64,
-    Int8,
-    Int16,
-    Int32,
-    Int64,
-    Int128,
-    Usize,
-    Uint8,
-    Uint16,
-    Uint32,
-    Uint64,
-    Uint128,
-    BigInteger, // We haven't implemented this yet, so this is a sign of error
-    BigFloat,   // Same with BigInteger
-    List(EntityIndex),
-    Map(EntityIndex, EntityIndex),
-    // Static list is a compile time array
-    // And this can not distingushed from a normal array
-    // for the programmer
-    StaticList(EntityIndex, usize),
-}
+    pub fn is_special(&self) -> bool {
+        matches!(self, Type::Special(_))
+    }
 
-/// This category is representing the state changes of the program or the special cases
-/// None of them will be evaluated in compile time, memoized, executed in a parallel and lazy evaluated
-pub enum SpecialType {
-    /// Represents mutation and IO operations
-    /// For example, reading a file, writing a file or changing a variable
-    Mutation,
+    pub fn matches(&self, other: &Type) -> bool {
+        match (self, other) {
+            (Type::Primitive(a), Type::Primitive(b)) => a == b,
+            (Type::Special(a), Type::Special(b)) => a == b,
+            (Type::Class { entity: a, .. }, Type::Class { entity: b, .. }) => a == b,
+            (
+                Type::Function {
+                    parameters: p1,
+                    return_type: r1,
+                    ..
+                },
+                Type::Function {
+                    parameters: p2,
+                    return_type: r2,
+                    ..
+                },
+            ) => {
+                if (!r1.matches(r2)) && p1.len() != p2.len() {
+                    return false;
+                }
 
-    /// For FFI, Lycian does not have a void type btw
-    /// This is works same with Mutation, but it express that the function came from a foreign language
-    Void,
-
-    /// Represent the end of the program, like panic
-    /// When a function returns Eschaton, the program will terminated after function finished
-    Eschaton,
-
-    /// Represent the absurd, like an infinite loop
-    /// When a function returns a Absurd, the program will terminated before function started
-    Absurd,
+                p1.iter()
+                    .zip(p2.iter())
+                    .all(|(param1, param2)| param1.matches(param2))
+            }
+            (
+                Type::FunctionApplication { function: a, .. },
+                Type::FunctionApplication { function: b, .. },
+            ) => a == b,
+            (Type::Literal(a), Type::Literal(b)) => a == b,
+            _ => false,
+        }
+    }
 }
