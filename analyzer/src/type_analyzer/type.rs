@@ -1,7 +1,7 @@
 mod class_state;
 pub use class_state::ClassState;
-mod parameter;
-pub use parameter::Parameter;
+mod pattern;
+pub use pattern::*;
 mod primitive_type;
 pub use primitive_type::PrimitiveType;
 mod special_type;
@@ -17,12 +17,12 @@ pub enum Type {
     },
     Function {
         entity: EntityIndex,
-        parameters: Vec<Parameter>,
+        parameters: Vec<Pattern>,
         return_type: Box<Type>,
     },
     FunctionApplication {
         function: EntityIndex,
-        arguments: Vec<Parameter>,
+        arguments: Vec<Pattern>,
     },
     Literal(LiteralIndex),
     Primitive(PrimitiveType),
@@ -70,5 +70,18 @@ impl Type {
             (Type::Literal(a), Type::Literal(b)) => a == b,
             _ => false,
         }
+    }
+
+    pub fn get_function_precedence(&self) -> Vec<PatternPrecedence> {
+        use std::convert::Into;
+
+        let Type::Function { parameters, .. } = self else {
+            panic!("Type is not a function")
+        };
+
+        parameters
+            .iter()
+            .map(|p| Into::<PatternPrecedence>::into(p))
+            .collect()
     }
 }
