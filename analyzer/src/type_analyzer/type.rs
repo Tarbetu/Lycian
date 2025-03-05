@@ -9,6 +9,8 @@ pub use special_type::SpecialType;
 
 use parser::{EntityIndex, LiteralIndex};
 
+use crate::AnalysisPipeline;
+
 pub enum Type {
     Class {
         entity: EntityIndex,
@@ -38,7 +40,7 @@ impl Type {
         matches!(self, Type::Special(_))
     }
 
-    pub fn matches(&self, other: &Type) -> bool {
+    pub fn matches(&self, other: &Type, pipeline: &AnalysisPipeline) -> bool {
         match (self, other) {
             (Type::Primitive(a), Type::Primitive(b)) => a == b,
             (Type::Special(a), Type::Special(b)) => a == b,
@@ -55,13 +57,13 @@ impl Type {
                     ..
                 },
             ) => {
-                if (!r1.matches(r2)) && p1.len() != p2.len() {
+                if (!r1.matches(r2, pipeline)) && p1.len() != p2.len() {
                     return false;
                 }
 
                 p1.iter()
                     .zip(p2.iter())
-                    .all(|(param1, param2)| param1.matches(param2))
+                    .all(|(param1, param2)| param1.matches(param2, pipeline))
             }
             (
                 Type::FunctionApplication { function: a, .. },

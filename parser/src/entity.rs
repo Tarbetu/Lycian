@@ -36,6 +36,12 @@ impl From<usize> for EntityIndex {
     }
 }
 
+impl EntityIndex {
+    pub fn is_same(self, other: EntityIndex, table: EntityTable) -> bool {
+        table[&self].name == table[&other].name
+    }
+}
+
 /// The entities are stored in an ordered way.
 /// The order:
 /// Global -> Class -> Declaration -> (Function | Argument | Call)
