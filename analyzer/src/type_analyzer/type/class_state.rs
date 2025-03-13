@@ -1,8 +1,8 @@
-use super::Parameter;
+use super::Pattern;
 use parser::EntityIndex;
 
 pub struct ClassState {
-    pub class_id: EntityIndex,
+    pub class: EntityIndex,
     pub state_entity: EntityIndex,
-    pub parameters: Vec<Parameter>,
+    pub parameters: Vec<Pattern>,
 }
