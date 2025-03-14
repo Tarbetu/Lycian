@@ -1,12 +1,12 @@
+mod typed_ast;
+pub use typed_ast::TypedClass;
 mod r#type;
 use crate::Analyzer;
 use crate::{AnalysisPipeline, ResolutionResult};
-use ahash::{HashMap, HashMapExt};
-use parser::{EntityIndex, Statement};
+// use ahash::{HashMap, HashMapExt};
+// use parser::{EntityIndex, Statement};
 pub use r#type::*;
-use rayon::prelude::*;
-mod typed_ast;
-use typed_ast::TypedClass;
+// use rayon::prelude::*;
 
 pub struct TypeAnalyzer<'a> {
     pipeline: &'a AnalysisPipeline,

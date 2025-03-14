@@ -7,10 +7,11 @@ pub use primitive_type::PrimitiveType;
 mod special_type;
 pub use special_type::SpecialType;
 
-use parser::{EntityIndex, LiteralIndex};
+use parser::{EntityIndex, EntityTable, LiteralIndex};
 
-use crate::AnalysisPipeline;
+use crate::{resolution_error::TypeError, AnalysisPipeline};
 
+#[derive(Debug, PartialEq)]
 pub enum Type {
     Class {
         entity: EntityIndex,
@@ -23,15 +24,19 @@ pub enum Type {
         return_type: Box<Type>,
     },
     FunctionApplication {
-        function: EntityIndex,
+        function: Box<Type>,
         arguments: Vec<Pattern>,
     },
     Literal(LiteralIndex),
-    Primitive(PrimitiveType),
+    Primitive(Box<PrimitiveType>),
     Special(SpecialType),
 }
 
 impl Type {
+    pub fn from_expr(expr: &parser::Expression, entities: &EntityTable) -> Result<Type, TypeError> {
+        unimplemented!()
+    }
+
     pub fn is_primitive(&self) -> bool {
         matches!(self, Type::Primitive(_))
     }

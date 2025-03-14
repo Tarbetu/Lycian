@@ -12,7 +12,7 @@ pub enum ResolutionErrorKind {
 
 pub struct InheritanceError {
     pub kind: InheritanceErrorKind,
-    pub index: EntityIndex,
+    pub index: Option<EntityIndex>,
     pub line: usize,
 }
 
@@ -30,7 +30,13 @@ pub struct TypeError {
 }
 
 pub enum TypeErrorKind {
-    GuardPatternNotSupported(String),
+    UnexpectedExpressionForPrimitive,
+    InvalidPrimitiveType,
+    NotImplementedYet,
+    InvalidList,
+    InvalidMap,
+    InvalidConstrainlessPattern,
 }
 
+pub type TypeResult<T> = Result<T, TypeError>;
 pub type ResolutionResult<T> = Result<T, ResolutionError>;

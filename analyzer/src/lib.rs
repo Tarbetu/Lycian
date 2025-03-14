@@ -9,7 +9,7 @@ pub use analyzer::Analyzer;
 use inheritance_analyzer::InheritanceAnalyzer;
 pub use resolution_error::ResolutionError;
 pub use resolution_error::ResolutionResult;
-use type_analyzer::{TypeAnalyzer, TypeRegistry};
+use type_analyzer::{TypeAnalyzer, TypedClass};
 
 /// The AnalysisPipeline struct contains all the analyzers and optimizers that are used to
 /// analyze the AST and produce a more optimized version of the AST.
@@ -42,7 +42,7 @@ impl AnalysisPipeline {
         InheritanceAnalyzer::new(&self.classes).analyze()
     }
 
-    pub fn analyze_types(&self) -> ResolutionResult<TypeRegistry> {
+    pub fn analyze_types(&self) -> ResolutionResult<Vec<TypedClass>> {
         TypeAnalyzer::new(self).analyze()
     }
 }

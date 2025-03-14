@@ -54,7 +54,7 @@ impl<'a> InheritanceAnalyzer<'a> {
                 Some(class) => class,
                 None => {
                     return vec![InheritanceError {
-                        index,
+                        index: Some(index),
                         kind: InheritanceErrorKind::UndefinedClass(index),
                         line: 0,
                     }]
@@ -66,7 +66,7 @@ impl<'a> InheritanceAnalyzer<'a> {
             let cycle_index = path.iter().position(|&x| x == class.name).unwrap();
 
             return vec![InheritanceError {
-                index: class.name,
+                index: Some(class.name),
                 kind: InheritanceErrorKind::Cycle(path[cycle_index..].to_vec()),
                 line: 0,
             }];
