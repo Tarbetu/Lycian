@@ -23,7 +23,7 @@ pub use pattern::*;
 pub use error::ParserError;
 pub use error::ParserResult;
 
-use operator::Operator;
+pub use operator::Operator;
 use scanner::{Token, TokenType};
 
 use ahash::AHashMap;

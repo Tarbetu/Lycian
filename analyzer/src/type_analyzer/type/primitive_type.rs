@@ -6,7 +6,7 @@ use crate::resolution_error::TypeResult;
 use crate::resolution_error::{TypeError, TypeErrorKind};
 use crate::{Entity, EntityTable};
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, PartialOrd)]
 pub enum PrimitiveType {
     Bool,
     Char,
@@ -25,14 +25,18 @@ pub enum PrimitiveType {
     Uint32,
     Uint64,
     Uint128,
-    BigInteger, // We haven't implemented this yet, so this is a sign of error
-    BigFloat,   // Same with BigInteger
-    List(Type),
-    Map(Type, Type),
+    LiteralInteger, // Untyped integer literal, we need to infer it
+    LiteralFloat,   // Untyped float literal, we need to infer it
+    EmptyList,      // Empty list literal, we need to infer the type
+    EmptyMap,       // Empty map literal, we need to infer the type
+    BigInteger,     // We haven't implemented this yet, so this is a sign of error
+    BigFloat,       // Same with BigInteger
+    List(Box<Type>),
+    Map(Box<Type>, Box<Type>),
 }
 
 impl PrimitiveType {
-    fn from_expr(value: &Expression, entities: &EntityTable) -> TypeResult<Self> {
+    pub fn from_expr(value: &Expression, entities: &EntityTable) -> TypeResult<Self> {
         let Expression::Call {
             name_id,
             args,
@@ -93,7 +97,9 @@ impl PrimitiveType {
                     });
                 };
 
-                Ok(PrimitiveType::List(Type::from_expr(value, entities)?))
+                Ok(PrimitiveType::List(Box::new(Type::from_expr(
+                    value, entities,
+                )?)))
             }
             "Map" => {
                 if args.len() != 2 {
@@ -131,8 +137,8 @@ impl PrimitiveType {
                 };
 
                 Ok(PrimitiveType::Map(
-                    Type::from_expr(key, entities)?,
-                    Type::from_expr(value, entities)?,
+                    Box::new(Type::from_expr(key, entities)?),
+                    Box::new(Type::from_expr(value, entities)?),
                 ))
             }
             _ => Err(TypeError {

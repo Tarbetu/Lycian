@@ -28,7 +28,7 @@ pub enum Type {
         arguments: Vec<Pattern>,
     },
     Literal(LiteralIndex),
-    Primitive(Box<PrimitiveType>),
+    Primitive(PrimitiveType),
     Special(SpecialType),
 }
 

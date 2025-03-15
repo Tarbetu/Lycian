@@ -9,7 +9,6 @@ use either::Either;
 
 pub type MaybeLiteral = Either<Expression, Literal>;
 
-// TODO: Use Rug
 #[derive(Clone, Debug)]
 pub enum Literal {
     Integer(RugFloat),

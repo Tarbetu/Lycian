@@ -11,10 +11,10 @@ pub enum SpecialType {
     Void,
 
     /// Represent the end of the program, like panic
-    /// When a function returns Eschaton, the program will terminated after function finished
+    /// When a function returns Eschaton, the program will be terminated after function finished
     Eschaton,
 
     /// Represent the absurd, like an infinite loop
-    /// When a function returns a Absurd, the program will terminated before function started
+    /// This is used for the functions that never returns
     Absurd,
 }
