@@ -703,7 +703,11 @@ impl<'a> Parser<'a> {
             let string = self.lexemes[token.start..token.end].join("");
             Literal::Str(string)
         } else if self.is_match(&[BraceOpen]) {
-            unimplemented!()
+            if self.is_match(&[BraceClose]) {
+                Literal::LiteralMap(AHashMap::new())
+            } else {
+                unimplemented!()
+            }
         } else if self.is_match(&[BracketOpen]) {
             if self.is_match(&[BracketClose]) {
                 Literal::LiteralList(vec![])
