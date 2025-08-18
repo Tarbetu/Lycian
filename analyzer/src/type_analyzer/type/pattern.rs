@@ -90,7 +90,7 @@ impl Pattern {
 
     fn from_typeless_pattern(
         typeless_pattern: &parser::Pattern,
-        entities: &EntityTable,
+        pipeline: &AnalysisPipeline,
     ) -> TypeResult<Self> {
         use parser::PatternName::*;
 
@@ -113,8 +113,8 @@ impl Pattern {
         };
 
         if let Some(condition) = &typeless_pattern.condition {
-            let guard = TypedExpression::from_expr(condition, entities)?;
-            let base_class = Type::from_expr(value, entities)?;
+            let guard = TypedExpression::from_expr(condition, pipeline)?;
+            let base_class = Type::from_expr(value, &pipeline.entities)?;
 
             Ok(Pattern::GuardConstrained {
                 id,

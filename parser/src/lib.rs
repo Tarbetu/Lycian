@@ -45,6 +45,19 @@ pub enum ParsingMode {
     Pattern,
 }
 
+pub struct ParserProduct {
+    pub global_entity: Entity,
+    pub entities: EntityTable,
+    pub literals: AHashMap<LiteralIndex, Literal>,
+    pub classes: AHashMap<EntityIndex, Class>,
+}
+
+impl ParserProduct {
+    pub fn get_literal(&self, index: LiteralIndex) -> &Literal {
+        self.literals.get(&index).expect("Invalid literal index")
+    }
+}
+
 pub struct Parser<'a> {
     pub global_entity: Entity,
     pub entities: EntityTable,
@@ -80,15 +93,11 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn get_entity(&self, index: EntityIndex) -> &Entity {
-        self.entities.get(&index).expect("Invalid name index")
-    }
-
     pub fn get_literal(&self, index: LiteralIndex) -> &Literal {
         self.literals.get(&index).expect("Invalid literal index")
     }
 
-    pub fn parse(&mut self) -> ParserResult<()> {
+    pub fn parse(mut self) -> ParserResult<ParserProduct> {
         while self.peek().is_some() {
             let program = self.class();
 
@@ -102,7 +111,12 @@ impl<'a> Parser<'a> {
             }
         }
 
-        Ok(())
+        Ok(ParserProduct {
+            global_entity: self.global_entity,
+            entities: self.entities,
+            literals: self.literals,
+            classes: self.classes,
+        })
     }
 
     pub fn class(&mut self) -> ParserResult<Class> {

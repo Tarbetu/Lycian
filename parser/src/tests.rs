@@ -10,10 +10,9 @@ mod parser_tests {
         Parser::new(graphemes, tokens)
     }
 
-    fn parse(source: &str) -> Parser {
-        let mut parser = initialize_parser(source);
-        parser.parse().unwrap();
-        parser
+    fn parse(source: &str) -> ParserProduct {
+        let parser = initialize_parser(source);
+        parser.parse().unwrap()
     }
 
     fn create_number(number: f64) -> rug::Float {
@@ -327,10 +326,9 @@ Connection:
     Error(String)
     DetailedError(code: Integer, message: String)
 ";
-        let mut parser = initialize_parser(source);
-        parser.parse().unwrap();
+        let result = initialize_parser(source).parse().unwrap();
 
-        let connection_class = parser.classes.get(&EntityIndex(1)).unwrap();
+        let connection_class = result.classes.get(&EntityIndex(1)).unwrap();
 
         assert_eq!(connection_class.name, EntityIndex(1));
         assert_eq!(connection_class.ancestors, vec![]);
@@ -408,11 +406,10 @@ Connection:
     #[test]
     fn test_empty_file() {
         let source = "";
-        let mut parser = initialize_parser(source);
-        let result = parser.parse();
+        let result = initialize_parser(source).parse();
 
         assert!(result.is_ok());
-        assert!(parser.classes.is_empty());
+        assert!(result.unwrap().classes.is_empty());
     }
 
     #[test]

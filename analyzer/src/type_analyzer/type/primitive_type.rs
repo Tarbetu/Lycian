@@ -6,7 +6,7 @@ use crate::resolution_error::TypeResult;
 use crate::resolution_error::{TypeError, TypeErrorKind};
 use crate::{Entity, EntityTable};
 
-#[derive(Debug, PartialEq, PartialOrd)]
+#[derive(Debug, PartialEq)]
 pub enum PrimitiveType {
     Bool,
     Char,

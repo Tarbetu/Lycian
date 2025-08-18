@@ -1,7 +1,9 @@
 mod analyzer;
 mod inheritance_analyzer;
 mod resolution_error;
+mod scope_analyzer;
 mod type_analyzer;
+use parser::ParserProduct;
 use parser::{Class, Entity, EntityIndex, EntityTable, Literal, LiteralIndex, Parser};
 
 use ahash::AHashMap;
@@ -15,9 +17,8 @@ use type_analyzer::{TypeAnalyzer, TypedClass};
 /// analyze the AST and produce a more optimized version of the AST.
 ///
 /// InheritanceAnalyzer: Detects inheritance cycles and invalid inheritance names.
-/// TypeAnalyzer: A classic for AOT compiler, type analyzer checks and deduce the types
-/// InheritanceResolver: Lycian staticly resolves inheritance and checks for cycles.
 /// ScopeResolver: Revolves the scope hierarchy and names of a program.
+/// TypeAnalyzer: A classic for AOT compiler, type analyzer checks and deduce the types
 /// MemoryAnalyzer: Lycian handles the memory statically instead of using a garbage collector.
 /// EffectAnalyzer: Lycian aims to be a pure language, but it allows effects for IO. Also we check the branches to determine if the code suits for GPU.
 /// Codegen and Optimizer: Lycian will have a backend, and we can use MLIR optimization passes.
@@ -28,8 +29,8 @@ pub struct AnalysisPipeline {
     literals: AHashMap<LiteralIndex, Literal>,
 }
 
-impl AnalysisPipeline {
-    pub fn new(parser: Parser) -> AnalysisPipeline {
+impl From<ParserProduct> for AnalysisPipeline {
+    fn from(parser: ParserProduct) -> AnalysisPipeline {
         AnalysisPipeline {
             global_entity: parser.global_entity,
             entities: parser.entities,
@@ -37,9 +38,16 @@ impl AnalysisPipeline {
             classes: parser.classes,
         }
     }
+}
 
+impl AnalysisPipeline {
     pub fn analyze_inheritance(&self) -> ResolutionResult<()> {
         InheritanceAnalyzer::new(&self.classes).analyze()
+    }
+
+    pub fn analyze_scopes(&self) -> ResolutionResult<()> {
+        // ScopeResolver::new(self).analyze()
+        Ok(())
     }
 
     pub fn analyze_types(&self) -> ResolutionResult<Vec<TypedClass>> {

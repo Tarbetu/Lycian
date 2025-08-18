@@ -94,6 +94,12 @@ impl TypedExpression {
                     _ => panic!("Unexpected operator in binary expression: {:?}", opr),
                 }
             }
+            IndexOperator(structure, index) => {
+                let structure = Self::from_expr(structure, pipeline)?;
+                let index = Self::from_expr(index, pipeline)?;
+
+                unimplemented!()
+            }
             _ => todo!(),
         }
     }
@@ -105,7 +111,7 @@ impl TypedExpression {
         use parser::Literal::*;
         match literal {
             Integer(big_float) => {
-                if big_float > &usize::MAX || big_float < &usize::MIN {
+                if !(usize::MIN..usize::MAX).contains(big_float) {
                     Err(TypeError {
                         kind: TypeErrorKind::IntegerOutOfRange,
                         index: None,
@@ -116,7 +122,7 @@ impl TypedExpression {
                 }
             }
             Float(big_float) => {
-                if big_float > &f64::MAX || big_float < &f64::MIN {
+                if !(f64::MIN..f64::MAX).contains(big_float) {
                     Err(TypeError {
                         kind: TypeErrorKind::FloatOutOfRange,
                         index: None,
