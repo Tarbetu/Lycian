@@ -206,7 +206,7 @@ impl Token {
     }
 
     pub fn documentation(span: Span, literal: String) -> Self {
-        Token::new(TokenType::Comment, span, Some(literal))
+        Token::new(TokenType::Documentation, span, Some(literal))
     }
 
     pub fn endline(span: Span) -> Self {
