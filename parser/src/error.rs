@@ -1,23 +1,25 @@
+use scanner::Span;
 use scanner::TokenType;
+use std::rc::Rc;
 use std::{error::Error, fmt::Display};
 
 pub type ParserResult<T> = Result<T, ParserError>;
 
 #[derive(Debug, PartialEq)]
 pub enum ParserError {
-    ErrorToken(TokenType, Option<usize>),
+    ErrorToken(TokenType, Option<Span>),
     UnexpectedToken {
         expected: &'static str,
         found: TokenType,
-        line: Option<usize>,
+        span: Option<Span>,
     },
-    InvalidAssignmentTarget(usize),
-    PatternListTooLong(usize),
+    InvalidAssignmentTarget(Span),
+    PatternListTooLong(Span),
     ErrorWithMessage(Box<ParserError>, &'static str),
-    UnexpectedBlockParams(usize, &'static str),
-    UnexpectedBlock(usize, TokenType),
-    DuplicateClass(String, usize),
-    DuplicateLocal(String, usize),
+    UnexpectedBlockParams(Span, &'static str),
+    UnexpectedBlock(Span, TokenType),
+    DuplicateClass(Rc<String>, Span),
+    DuplicateLocal(Rc<String>, Span),
 }
 
 impl Display for ParserError {
@@ -25,8 +27,8 @@ impl Display for ParserError {
         use ParserError::*;
 
         match self {
-            ErrorToken(token, Some(line)) => {
-                write!(f, "[{}] Found {}", line, token)
+            ErrorToken(token, Some(span)) => {
+                write!(f, "[{}] Found {}", span, token)
             }
             ErrorToken(token, None) => {
                 write!(f, "[at end] Found {}", token)
@@ -34,44 +36,44 @@ impl Display for ParserError {
             UnexpectedToken {
                 expected,
                 found,
-                line: Some(line),
+                span: Some(span),
             } => {
-                write!(f, "[{}] Expected {} but found {}", line, expected, found)
+                write!(f, "[{}] Expected {} but found {}", span, expected, found)
             }
             UnexpectedToken {
                 expected,
                 found,
-                line: None,
+                span: None,
             } => {
                 write!(f, "[at end] Expected {} but found {}", expected, found)
             }
-            InvalidAssignmentTarget(line) => {
-                write!(f, "[{}] Invalid assignment target", line)
+            InvalidAssignmentTarget(span) => {
+                write!(f, "[{}] Invalid assignment target", span)
             }
-            PatternListTooLong(line) => {
-                write!(f, "[{}] Too many patterns in pattern list", line)
+            PatternListTooLong(span) => {
+                write!(f, "[{}] Too many patterns in pattern list", span)
             }
             ErrorWithMessage(err, msg) => {
                 write!(f, "{}\n{}", err, msg)
             }
-            UnexpectedBlockParams(line, context) => {
+            UnexpectedBlockParams(span, context) => {
                 write!(
                     f,
                     "[{}] Block parameters is not allowed in {}",
-                    line, context
+                    span, context
                 )
             }
-            UnexpectedBlock(line, token_type) => {
-                write!(f, "[{}] Unexpected block for {}", line, token_type)
+            UnexpectedBlock(span, token_type) => {
+                write!(f, "[{}] Unexpected block for {}", span, token_type)
             }
-            DuplicateClass(class_name, line) => {
-                write!(f, "[{}] Class {} already defined", line, class_name)
+            DuplicateClass(class_name, span) => {
+                write!(f, "[{}] Class {} already defined", span, class_name)
             }
-            DuplicateLocal(class_name, line) => {
+            DuplicateLocal(class_name, span) => {
                 write!(
                     f,
                     "[{}] {} already defined, you can not redefine or overload locals",
-                    line, class_name
+                    span, class_name
                 )
             }
         }

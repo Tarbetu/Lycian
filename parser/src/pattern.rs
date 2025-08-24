@@ -1,21 +1,17 @@
-use crate::{EntityIndex, Expression};
+use crate::Expression;
+use std::rc::Rc;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Pattern {
     pub name: PatternName,
-    pub value: Option<Expression>,
+    pub value: Expression,
     pub condition: Option<Expression>,
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PatternName {
-    Name(EntityIndex),
+    Name(Rc<String>),
     ClassSelf,
+    Super,
     NoName,
-}
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum PatternType {
-    Argument,
-    Parameter,
 }

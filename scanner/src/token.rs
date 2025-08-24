@@ -29,6 +29,14 @@ impl Token {
         }
     }
 
+    pub fn unwrap_literal(&self) -> Rc<String> {
+        if let TokenLiteral::Variable(ref literal) = self.literal {
+            literal.clone()
+        } else {
+            panic!("Tried to unwrap a non-variable token literal");
+        }
+    }
+
     pub fn paren_open(span: Span) -> Self {
         Token::new(TokenType::ParenOpen, span, None)
     }

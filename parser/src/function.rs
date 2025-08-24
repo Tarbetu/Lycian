@@ -1,17 +1,16 @@
-use ahash::AHashMap;
-
-use crate::EntityIndex;
 use crate::Expression;
 use crate::Pattern;
+use scanner::Span;
+use std::rc::Rc;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Function {
-    pub name: EntityIndex,
+    pub name: Rc<String>,
     pub params: Vec<Pattern>,
     pub return_type: Option<Expression>,
-    pub environment: Option<AHashMap<EntityIndex, Vec<Function>>>,
     pub body: Expression,
-    pub decorator: String,
+    pub decorator: Rc<String>,
+    pub span: Span,
 }
 
 impl Function {

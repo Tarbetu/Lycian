@@ -1,13 +1,9 @@
-use ahash::AHashMap;
+use crate::{Expression, ExpressionKind};
 pub use rug::Float as RugFloat;
 use std::ops::*;
+use std::rc::Rc;
 
 pub const PRECISION: u32 = 52;
-
-use crate::Expression;
-use either::Either;
-
-pub type MaybeLiteral = Either<Expression, Literal>;
 
 #[derive(Clone, Debug)]
 pub enum Literal {
@@ -15,9 +11,9 @@ pub enum Literal {
     Float(RugFloat),
     Boolean(bool),
     Char(u32),
-    Str(String),
-    LiteralList(Vec<MaybeLiteral>),
-    LiteralMap(AHashMap<MaybeLiteral, MaybeLiteral>),
+    Str(Rc<String>),
+    LiteralList(Vec<Expression>),
+    LiteralArray(Vec<Expression>),
 }
 
 impl Add for &Literal {
@@ -29,7 +25,7 @@ impl Add for &Literal {
         match (self, rhs) {
             (Integer(lhs), Integer(rhs)) => Some(Integer(rug(lhs + rhs))),
             (Float(lhs), Float(rhs)) => Some(Float(rug(lhs + rhs))),
-            (Str(lhs), Str(rhs)) => Some(Str(format!("{}{}", lhs, rhs))),
+            (Str(lhs), Str(rhs)) => Some(Str(Rc::new(format!("{}{}", lhs, rhs)))),
             (LiteralList(lhs), LiteralList(rhs)) => {
                 Some(LiteralList([lhs.clone(), rhs.clone()].concat()))
             }
@@ -136,7 +132,7 @@ impl PartialEq for Literal {
             (LiteralList(lhs), LiteralList(rhs)) => {
                 lhs.len() == rhs.len() && lhs.iter().eq(rhs.iter())
             }
-            (LiteralMap(lhs), LiteralMap(rhs)) => {
+            (LiteralArray(lhs), LiteralArray(rhs)) => {
                 lhs.len() == rhs.len() && lhs.iter().eq(rhs.iter())
             }
             _ => false,
@@ -191,19 +187,16 @@ impl Literal {
     }
 
     pub fn in_operator(&self, rhs: &Self) -> Option<Self> {
-        use Literal::{Boolean, LiteralList, LiteralMap};
+        use Literal::{Boolean, LiteralArray, LiteralList};
 
         match (self, rhs) {
-            (lhs, LiteralList(rhs)) => {
-                Some(Boolean(rhs.iter().any(|x| {
-                    x.as_ref().right().map(|x| x == lhs).unwrap_or(false)
-                })))
-            }
-            (lhs, LiteralMap(rhs)) => {
-                Some(Boolean(rhs.keys().any(|x| {
-                    x.as_ref().right().map(|x| x == lhs).unwrap_or(false)
-                })))
-            }
+            (lhs, LiteralList(rhs) | LiteralArray(rhs)) => Some(Boolean(rhs.iter().any(|i| {
+                if let ExpressionKind::Literal(i) = i.kind.as_ref() {
+                    i.as_ref() == lhs
+                } else {
+                    false
+                }
+            }))),
             _ => None,
         }
     }
@@ -245,18 +238,14 @@ impl Literal {
         self.greater(rhs).and_then(|x| x.not())
     }
 
-    pub fn get(&self, key: &Self) -> Option<MaybeLiteral> {
-        use Literal::{Integer, LiteralList, LiteralMap};
+    pub fn get(&self, key: &Self) -> Option<Expression> {
+        use Literal::{Integer, LiteralArray, LiteralList};
 
         match (self, key) {
-            (LiteralList(list), Integer(num)) => num
+            (LiteralList(list) | LiteralArray(list), Integer(num)) => num
                 .to_integer()
                 .and_then(|int| int.to_usize())
                 .and_then(|index| list.get(index).cloned()),
-            (LiteralMap(map), ref key) => map
-                .iter()
-                .find(|(k, _)| k.as_ref().right().map(|k| &k == key).unwrap_or(false))
-                .map(|(_, v)| v.clone()),
             _ => unreachable!(),
         }
     }

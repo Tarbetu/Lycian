@@ -1,37 +1,56 @@
 use crate::operator::*;
-use crate::EntityIndex;
-use crate::LiteralIndex;
+use crate::Function;
+use crate::Literal;
 use crate::Pattern;
+use scanner::Span;
+use std::rc::Rc;
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Expression {
-    Literal(LiteralIndex),
-    Grouping(Box<Expression>),
+pub struct Expression {
+    pub id: usize,
+    pub kind: Box<ExpressionKind>,
+    pub span: Span,
+}
 
-    Binary(Box<Expression>, Operator, Box<Expression>),
-    Unary(Operator, Box<Expression>),
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExpressionKind {
+    Literal(Rc<Literal>),
+    Grouping(Expression),
 
-    Function(EntityIndex),
+    Binary(Expression, Operator, Expression),
+    Unary(Operator, Expression),
+
+    Function(Function),
 
     Match {
-        scrutinee: Box<Expression>,
+        scrutinee: Expression,
         arms: Vec<(Pattern, Expression)>,
     },
 
     Call {
-        name_id: EntityIndex,
-        caller: Option<Box<Expression>>,
-        args: Vec<Pattern>,
-        block: Option<Box<Expression>>,
+        caller: Rc<String>,
+        callee: Option<Expression>,
+        args: Vec<Expression>,
+        block: Option<Expression>,
+        call_type: CallType,
     },
 
-    IndexOperator(Box<Expression>, Box<Expression>),
+    IndexOperator(Expression, Expression),
 
     ClassSelf,
     Super,
+    Pass,
+
     Block {
         expressions: Vec<Expression>,
-        value: Box<Expression>,
+        value: Expression,
         params: Vec<Pattern>,
     },
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Default)]
+pub enum CallType {
+    #[default]
+    LazyMemoized,
+    Strict,
 }

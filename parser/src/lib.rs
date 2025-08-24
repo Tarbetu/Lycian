@@ -1,21 +1,17 @@
 mod class;
-mod entity;
 mod error;
 mod expression;
 mod function;
 mod literal;
 mod operator;
 mod pattern;
-mod statement;
 mod tests;
 
-use std::mem::swap;
-
+use crate::expression::CallType;
 pub use crate::literal::*;
 pub use class::Class;
-pub use entity::*;
 pub use expression::Expression;
-pub use statement::Statement;
+pub use expression::ExpressionKind;
 
 pub use function::Function;
 pub use pattern::*;
@@ -24,14 +20,12 @@ pub use error::ParserError;
 pub use error::ParserResult;
 
 pub use operator::Operator;
-use scanner::{Token, TokenType};
+use scanner::{Span, Token, TokenType};
 
 use ahash::AHashMap;
-use either::Either;
 pub use scopeguard::guard;
-
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Ord, Eq, Hash)]
-pub struct LiteralIndex(pub usize);
+use std::mem::swap;
+use std::rc::Rc;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum ParsingMode {
@@ -42,173 +36,113 @@ pub enum ParsingMode {
     // : symbol will be interpreted as:
     //   start of match block,
     //   and name of pattern
-    Pattern,
+    NoBlock,
 }
 
-pub struct ParserProduct {
-    pub global_entity: Entity,
-    pub entities: EntityTable,
-    pub literals: AHashMap<LiteralIndex, Literal>,
-    pub classes: AHashMap<EntityIndex, Class>,
-}
-
-impl ParserProduct {
-    pub fn get_literal(&self, index: LiteralIndex) -> &Literal {
-        self.literals.get(&index).expect("Invalid literal index")
-    }
-}
-
-pub struct Parser<'a> {
-    pub global_entity: Entity,
-    pub entities: EntityTable,
-    pub literals: AHashMap<LiteralIndex, Literal>,
-    pub classes: AHashMap<EntityIndex, Class>,
-    lexemes: Vec<&'a str>,
+pub struct Parser {
+    pub classes: AHashMap<Rc<String>, Class>,
     tokens: Vec<Token>,
     position: usize,
-    current_class_index: EntityIndex,
-    current_declaration_index: EntityIndex,
-    current_local_index: EntityIndex,
-    current_methods: AHashMap<EntityIndex, Vec<Function>>,
-    current_environment: AHashMap<EntityIndex, Vec<Function>>,
     parsing_mode: ParsingMode,
+    last_expr_id: usize,
+    current_class: Class,
 }
 
-impl<'a> Parser<'a> {
-    pub fn new(lexemes: Vec<&'a str>, tokens: Vec<Token>) -> Parser<'a> {
+impl Parser {
+    pub fn new(tokens: Vec<Token>) -> Parser {
         Parser {
-            lexemes,
             tokens,
             position: 0,
-            global_entity: Entity::default(),
-            entities: EntityTable::new(),
             classes: AHashMap::new(),
-            current_class_index: EntityIndex(0),
-            current_declaration_index: EntityIndex(0),
-            current_local_index: EntityIndex(0),
-            current_methods: AHashMap::new(),
-            current_environment: AHashMap::new(),
-            literals: AHashMap::new(),
             parsing_mode: ParsingMode::Normal,
+            last_expr_id: 1,
+            current_class: Class::default(),
         }
     }
 
-    pub fn get_literal(&self, index: LiteralIndex) -> &Literal {
-        self.literals.get(&index).expect("Invalid literal index")
-    }
-
-    pub fn parse(mut self) -> ParserResult<ParserProduct> {
+    pub fn parse(mut self) -> ParserResult<Parser> {
         while self.peek().is_some() {
-            let program = self.class();
+            self.class()?;
 
-            match program {
-                Ok(class) => {
-                    self.classes.insert(class.name, class);
-                }
-                Err(e) => {
-                    return Err(e);
-                }
-            }
+            let mut class = Class::default();
+            swap(&mut class, &mut self.current_class);
+            self.classes.insert(class.name.clone(), class);
         }
 
-        Ok(ParserProduct {
-            global_entity: self.global_entity,
-            entities: self.entities,
-            literals: self.literals,
-            classes: self.classes,
-        })
+        Ok(self)
     }
 
-    pub fn class(&mut self) -> ParserResult<Class> {
-        use Statement::*;
+    pub fn class(&mut self) -> ParserResult<()> {
         use TokenType::*;
 
-        let decorator = self.consume_decorator()?;
+        self.current_class.decorator = self.consume_decorator()?;
 
-        let name = self.consume_class_name()?;
+        (self.current_class.span, self.current_class.name) = self.consume_class_name()?;
 
         self.consume(Colon, "':'")?;
         self.consume_endline()?;
         self.consume(Indent, "Indendation start")?;
 
-        let mut ancestors = Vec::new();
-
-        if self.is_match(&[TokenType::Implementing]) {
-            ancestors.push(self.consume_class_name()?);
-
-            while let Some(TokenType::Implementing) = self.peek().map(|t| t.kind) {
-                self.advance();
-                ancestors.push(self.consume_class_name()?);
-            }
+        let mut ancestors = vec![];
+        while let Some(TokenType::Implementing) = self.peek().map(|t| t.kind) {
+            self.advance();
+            ancestors.push(self.consume_name()?);
         }
+        self.current_class.ancestors = ancestors;
 
-        let mut states = vec![];
+        self.declaration()?;
 
         while !self.is_match(&[Dedent]) {
             self.skip_while(&[Endline]);
-            if let Some(declaration) = self.declaration()? {
-                match declaration {
-                    state @ ClassState { .. } => states.push(state),
-                    Method(_) => {}
-                    _ => unreachable!(),
-                };
-            }
+
+            self.declaration()?;
         }
-        self.current_class_index = 0.into();
-        self.current_declaration_index = 0.into();
-        self.current_local_index = 0.into();
 
-        let mut methods = AHashMap::new();
-        swap(&mut self.current_methods, &mut methods);
-
-        Ok(Class {
-            name,
-            ancestors,
-            states,
-            methods,
-            decorator,
-            // Line is last token's line, fix it
-            line: self.previous().line,
-        })
+        Ok(())
     }
 
-    fn declaration(&mut self) -> ParserResult<Option<Statement>> {
-        use Statement::{ClassState, Method};
-        use TokenType::{Arrow, Endline, Equal, ParenClose, ParenOpen};
+    fn declaration(&mut self) -> ParserResult<()> {
+        use TokenType::{Arrow, Declaration, Endline, ParenClose, ParenOpen};
 
-        let mut parser = guard(self, |parser| {
-            parser.current_declaration_index = 0.into();
-            parser.current_local_index = 0.into();
-        });
+        let decorator = self.consume_decorator()?;
 
-        let decorator = parser.consume_decorator()?;
+        let name = self.consume_name()?;
 
-        let name = parser.consume_declaration_name()?;
-
-        let patterns = if parser.is_match(&[ParenOpen]) {
-            parser.pattern_list(ParenClose, "Closing Paranthesis", PatternType::Argument)?
+        let patterns = if self.is_match(&[ParenOpen]) {
+            self.pattern_list(ParenClose, "Closing Paranthesis")?
         } else {
             vec![]
         };
 
-        if parser.is_match(&[Endline]) {
-            Ok(Some(ClassState { name, patterns }))
+        if self.is_match(&[Endline]) {
+            Ok(self.current_class.constructors.push((name, patterns)))
         } else {
-            let return_type = if parser.is_match(&[Arrow]) {
-                Some(parser.or()?)
+            let return_type = if self.is_match(&[Arrow]) {
+                Some(self.or()?)
             } else {
                 None
             };
 
-            parser.consume(Equal, "Equal sign")?;
+            let token = self.consume(Declaration, "Equal sign")?;
 
-            let body = parser.block(false, Some("Method Definition"))?;
+            let body = self.block(false, Some("Method Definition"))?;
+            let body = self.eliminate_expr(body);
 
-            let mut environment = AHashMap::new();
-            swap(&mut parser.current_environment, &mut environment);
+            let method = Function {
+                name: name.clone(),
+                params: patterns,
+                return_type,
+                body,
+                decorator,
+                span: token.span,
+            };
 
-            parser.push_method(name, patterns, return_type, body, environment, decorator);
-            Ok(Some(Method(name)))
+            Ok(self
+                .current_class
+                .methods
+                .entry(name)
+                .or_default()
+                .push(method))
         }
     }
 
@@ -216,54 +150,51 @@ impl<'a> Parser<'a> {
         &mut self,
         end_with: TokenType,
         expected: &'static str,
-        pattern_type: PatternType,
     ) -> ParserResult<Vec<Pattern>> {
         use TokenType::{Comma, Endline};
 
         let mut patterns = Vec::new();
 
-        patterns.push(self.pattern(pattern_type)?);
+        patterns.push(self.pattern()?);
 
         while self.is_match(&[Comma, Endline]) {
-            patterns.push(self.pattern(pattern_type)?);
+            patterns.push(self.pattern()?);
         }
 
         self.consume(end_with, expected)?;
 
-        if patterns.len() >= 255 {
-            return Err(ParserError::PatternListTooLong(self.previous().line));
+        if patterns.len() >= 50 {
+            return Err(ParserError::PatternListTooLong(self.previous().span));
         }
 
         Ok(patterns)
     }
 
-    fn pattern(&mut self, pattern_type: PatternType) -> ParserResult<Pattern> {
-        use Expression::{Call, ClassSelf};
+    fn pattern(&mut self) -> ParserResult<Pattern> {
+        use ExpressionKind::{Call, ClassSelf};
         use TokenType::*;
         let parsing_mode_before = self.parsing_mode;
-        self.parsing_mode = ParsingMode::Pattern;
+        self.parsing_mode = ParsingMode::NoBlock;
         let mut parser = guard(self, |parser| parser.parsing_mode = parsing_mode_before);
 
-        let first_expr = parser.expression()?;
+        let expr = parser.expression()?;
 
         // If it contains : token, this is a name:value pattern
         if parser.is_match(&[Colon]) {
-            let name = match first_expr {
-                Call { name_id, .. } => PatternName::Name(name_id),
+            let name = match *expr.kind {
+                Call { caller, .. } => PatternName::Name(caller),
                 ClassSelf => PatternName::ClassSelf,
                 _ => {
                     return Err(ParserError::UnexpectedToken {
                         expected: "Name",
                         found: parser.previous().kind,
-                        line: Some(parser.previous().line),
-                    })
+                        span: Some(parser.previous().span),
+                    });
                 }
             };
 
-            // Parsing value
-            let value = Some(parser.expression()?);
+            let value = parser.expression()?;
 
-            // Parsing condition
             let condition = if parser.is_match(&[When]) {
                 Some(parser.or()?)
             } else {
@@ -282,31 +213,11 @@ impl<'a> Parser<'a> {
                 None
             };
 
-            match (pattern_type, first_expr) {
-                (PatternType::Argument, expr) => Ok(Pattern {
-                    name: PatternName::NoName,
-                    value: Some(expr),
-                    condition,
-                }),
-                (
-                    PatternType::Parameter,
-                    Call {
-                        name_id,
-                        caller: None,
-                        block: None,
-                        args,
-                    },
-                ) if args.is_empty() => Ok(Pattern {
-                    name: PatternName::Name(name_id),
-                    value: None,
-                    condition,
-                }),
-                _ => Err(ParserError::UnexpectedToken {
-                    expected: "Name",
-                    found: parser.previous().kind,
-                    line: Some(parser.previous().line),
-                }),
-            }
+            Ok(Pattern {
+                name: PatternName::NoName,
+                value: expr,
+                condition: condition,
+            })
         }
     }
 
@@ -318,16 +229,14 @@ impl<'a> Parser<'a> {
         use TokenType::{Dedent, Endline, Indent, Pipe};
 
         let params = if self.is_match(&[Pipe]) {
-            self.pattern_list(Pipe, "| symbol", PatternType::Parameter)?
+            self.pattern_list(Pipe, "| symbol")?
         } else {
             vec![]
         };
 
-        // Remove this concept, it's blocks the lambda
-        // Or is there ambiguity?
         if !(params_expected || params.is_empty()) {
             return Err(ParserError::UnexpectedBlockParams(
-                self.previous().line,
+                self.previous().span,
                 context_info.unwrap(),
             ));
         }
@@ -350,18 +259,21 @@ impl<'a> Parser<'a> {
         }
 
         let value = expressions.pop().unwrap();
+        let span = value.span.clone();
 
-        if let Some(value) = self.eval_constexpr(&value)? {
-            Ok(value)
-        } else if expressions.is_empty() && params.is_empty() {
-            Ok(value)
+        Ok(if expressions.is_empty() && params.is_empty() {
+            value
         } else {
-            Ok(Expression::Block {
-                expressions,
-                value: Box::new(value),
-                params,
-            })
-        }
+            Expression {
+                kind: Box::new(ExpressionKind::Block {
+                    expressions,
+                    value: value,
+                    params,
+                }),
+                id: self.next_id(),
+                span: span,
+            }
+        })
     }
 
     fn expression(&mut self) -> ParserResult<Expression> {
@@ -370,82 +282,70 @@ impl<'a> Parser<'a> {
 
     fn function(&mut self) -> ParserResult<Expression> {
         use TokenType::*;
-        let mut parser = guard(self, |parser| parser.current_local_index = 0.into());
 
-        let name_token = parser.peek();
-        let mut expr = parser.lambda()?;
-        let params = if parser.is_match(&[ParenOpen]) {
-            parser.pattern_list(ParenClose, "Closing Paranthesis", PatternType::Parameter)?
+        let name_token = self.peek();
+        let mut expr = self.match_expr()?;
+        let params = if self.is_match(&[ParenOpen]) {
+            self.pattern_list(ParenClose, "Closing Paranthesis")?
         } else {
             vec![]
         };
 
-        let return_type = if parser.parsing_mode == ParsingMode::Normal && parser.is_match(&[Arrow])
-        {
-            Some(parser.or()?)
+        let return_type = if self.is_match(&[Arrow]) {
+            Some(self.or()?)
         } else {
             None
         };
 
-        if parser.is_match(&[Equal]) {
-            let value = parser.block(false, Some("Function Definition"))?;
+        if self.is_match(&[Declaration]) {
+            let value = self.block(false, Some("Function Definition"))?;
 
             let Some(name_token) = name_token else {
                 return Err(ParserError::UnexpectedToken {
                     expected: "Local Name",
                     found: TokenType::Eof,
-                    line: None,
+                    span: (name_token.map(|tkn| tkn.span.clone())),
                 });
             };
-            let name = parser.consume_local_name(name_token)?;
+            let name = self.consume_name_from_token(&name_token)?;
 
-            parser.push_function(name, params, return_type, value, String::new());
-
-            expr = Expression::Function(name);
+            expr = Expression {
+                kind: Box::new(ExpressionKind::Function(Function {
+                    name: name,
+                    params,
+                    return_type,
+                    body: value,
+                    span: name_token.span.clone(),
+                    decorator: Rc::new(String::new()),
+                })),
+                span: name_token.span,
+                id: self.next_id(),
+            };
         }
 
         Ok(expr)
     }
 
-    fn lambda(&mut self) -> ParserResult<Expression> {
-        use TokenType::Pipe;
-
-        if self.is_match(&[Pipe]) {
-            let params = self.pattern_list(Pipe, "| symbol", PatternType::Parameter)?;
-            let expr = self.expression()?;
-
-            Ok(Expression::Block {
-                value: Box::new(expr),
-                expressions: vec![],
-                params,
-            })
-        } else {
-            self.match_expr()
-        }
-    }
-
     fn match_expr(&mut self) -> ParserResult<Expression> {
-        use TokenType::{Arrow, Colon, Dedent, Endline, Indent, Match};
+        use TokenType::{Colon, Dedent, Endline, FatArrow, Indent, Match};
         if self.is_match(&[Match]) {
-            let parsing_mode_before = self.parsing_mode;
-            self.parsing_mode = ParsingMode::Pattern;
-            let mut parser = guard(self, |parser| parser.parsing_mode = parsing_mode_before);
-            let scrutinee = parser.expression()?;
+            let span = self.previous().span;
+            let scrutinee = self.expression()?;
 
-            parser.consume(Colon, ": symbol")?;
-            parser.consume_endline()?;
-            parser.consume(Indent, "Indendation start")?;
+            self.consume(Colon, ": symbol")?;
+            self.consume_endline()?;
+            self.consume(Indent, "Indendation start")?;
 
             let arms = {
                 let mut arms = vec![];
 
-                while !parser.is_match(&[Dedent]) {
-                    parser.skip_while(&[Endline]);
-                    let pattern = parser.pattern(PatternType::Argument)?;
+                while !self.is_match(&[Dedent]) {
+                    self.skip_while(&[Endline]);
+                    let pattern = self.pattern()?;
 
-                    parser.consume(Arrow, "Arrow")?;
+                    self.consume(FatArrow, "The Fat Arrow (=>)")?;
 
-                    let expr = parser.block(true, None)?;
+                    let expr = self.block(true, None)?;
 
                     arms.push((pattern, expr));
                 }
@@ -453,9 +353,13 @@ impl<'a> Parser<'a> {
                 arms
             };
 
-            Ok(Expression::Match {
-                scrutinee: Box::new(scrutinee),
-                arms,
+            Ok(Expression {
+                kind: Box::new(ExpressionKind::Match {
+                    scrutinee: scrutinee,
+                    arms,
+                }),
+                id: self.next_id(),
+                span,
             })
         } else {
             self.or()
@@ -468,9 +372,14 @@ impl<'a> Parser<'a> {
         let mut left = self.and()?;
 
         while self.is_match(&[Or]) {
+            let span = self.previous().span;
             let right = self.and()?;
 
-            left = Expression::Binary(Box::new(left), Operator::Or, Box::new(right));
+            left = Expression {
+                kind: Box::new(ExpressionKind::Binary(left, Operator::Or, right)),
+                id: self.next_id(),
+                span,
+            };
         }
 
         Ok(left)
@@ -482,29 +391,39 @@ impl<'a> Parser<'a> {
         let mut left = self.equality()?;
 
         while self.is_match(&[And]) {
+            let span = self.previous().span;
             let right = self.equality()?;
 
-            left = Expression::Binary(Box::new(left), Operator::And, Box::new(right));
+            left = Expression {
+                kind: Box::new(ExpressionKind::Binary(left, Operator::And, right)),
+                id: self.next_id(),
+                span,
+            };
         }
 
         Ok(left)
     }
 
     fn equality(&mut self) -> ParserResult<Expression> {
-        use TokenType::{EqualEqual, NotEqual};
+        use TokenType::{Equal, NotEqual};
 
         let mut left = self.comparison()?;
 
-        while self.is_match(&[EqualEqual, NotEqual]) {
-            let operator = match self.previous().kind {
-                EqualEqual => Operator::Equal,
+        while self.is_match(&[Equal, NotEqual]) {
+            let Token { kind, span, .. } = self.previous();
+            let operator = match kind {
+                Equal => Operator::Equal,
                 NotEqual => Operator::NotEqual,
                 _ => unreachable!(),
             };
 
             let right = self.comparison()?;
 
-            left = Expression::Binary(Box::new(left), operator, Box::new(right));
+            left = Expression {
+                kind: Box::new(ExpressionKind::Binary(left, operator, right)),
+                id: self.next_id(),
+                span,
+            }
         }
 
         Ok(left)
@@ -516,7 +435,8 @@ impl<'a> Parser<'a> {
         let mut left = self.term()?;
 
         while self.is_match(&[Greater, GreaterEqual, Less, LessEqual]) {
-            let operator = match self.previous().kind {
+            let Token { kind, span, .. } = self.previous();
+            let operator = match kind {
                 Greater => Operator::Greater,
                 GreaterEqual => Operator::GreaterOrEqual,
                 Less => Operator::Smaller,
@@ -525,8 +445,11 @@ impl<'a> Parser<'a> {
             };
 
             let right = self.term()?;
-
-            left = Expression::Binary(Box::new(left), operator, Box::new(right));
+            left = Expression {
+                kind: Box::new(ExpressionKind::Binary(left, operator, right)),
+                id: self.next_id(),
+                span,
+            }
         }
 
         Ok(left)
@@ -538,7 +461,8 @@ impl<'a> Parser<'a> {
         let mut left = self.factor()?;
 
         while self.is_match(&[Plus, Minus]) {
-            let operator = match self.previous().kind {
+            let Token { kind, span, .. } = self.previous();
+            let operator = match kind {
                 Plus => Operator::Add,
                 Minus => Operator::Substract,
                 _ => unreachable!(),
@@ -546,7 +470,11 @@ impl<'a> Parser<'a> {
 
             let right = self.factor()?;
 
-            left = Expression::Binary(Box::new(left), operator, Box::new(right));
+            left = Expression {
+                kind: Box::new(ExpressionKind::Binary(left, operator, right)),
+                id: self.next_id(),
+                span,
+            }
         }
 
         Ok(left)
@@ -558,7 +486,8 @@ impl<'a> Parser<'a> {
         let mut left = self.unary()?;
 
         while self.is_match(&[Star, Slash, Percent]) {
-            let operator = match self.previous().kind {
+            let Token { kind, span, .. } = self.previous();
+            let operator = match kind {
                 Star => Operator::Multiply,
                 Slash => Operator::Divide,
                 Percent => Operator::Modulo,
@@ -566,7 +495,11 @@ impl<'a> Parser<'a> {
             };
 
             let right = self.unary()?;
-            left = Expression::Binary(Box::new(left), operator, Box::new(right));
+            left = Expression {
+                kind: Box::new(ExpressionKind::Binary(left, operator, right)),
+                id: self.next_id(),
+                span,
+            }
         }
 
         Ok(left)
@@ -576,7 +509,8 @@ impl<'a> Parser<'a> {
         use TokenType::{Minus, Not};
 
         if self.is_match(&[Not, Minus]) {
-            let operator = match self.previous().kind {
+            let Token { kind, span, .. } = self.previous();
+            let operator = match kind {
                 Not => Operator::Not,
                 Minus => Operator::Negate,
                 _ => unreachable!(),
@@ -584,189 +518,299 @@ impl<'a> Parser<'a> {
 
             let right = self.unary()?;
 
-            Ok(Expression::Unary(operator, Box::new(right)))
+            Ok(Expression {
+                kind: Box::new(ExpressionKind::Unary(operator, right)),
+                id: self.next_id(),
+                span,
+            })
         } else {
             self.call()
         }
     }
 
     fn call(&mut self) -> ParserResult<Expression> {
-        use Expression::Call;
-        use TokenType::{Colon, Dot, ParenClose, ParenOpen};
-        let mut expr = self.primary(true)?;
+        use ExpressionKind::Call;
+        use TokenType::{Colon, Dot, Not, ParenClose, ParenOpen};
+        let mut expr = self.primary()?;
 
         loop {
             if self.is_match(&[ParenOpen]) {
-                let args = if self.is_match(&[ParenClose]) {
-                    vec![]
+                let span = self.previous().span;
+
+                if self.is_match(&[ParenClose]) {
+                    continue;
                 } else {
-                    self.pattern_list(ParenClose, "Closing Paranthesis", PatternType::Argument)?
-                };
-
-                expr = match expr {
-                    Call {
-                        caller, name_id, ..
-                    } => Call {
+                    let Call {
                         caller,
-                        name_id,
-                        args,
-                        block: None,
-                    },
-                    _ => {
+                        callee,
+                        block,
+                        ..
+                    } = *expr.kind
+                    else {
                         return Err(ParserError::UnexpectedToken {
-                            expected: "CallRoot",
+                            expected: "Callee",
                             found: self.peek().map(|t| t.kind).unwrap_or(TokenType::Eof),
-                            line: self.peek().map(|t| t.line),
-                        })
-                    }
-                };
-            } else if self.is_match(&[Dot]) {
-                let Call { name_id, .. } = self.primary(false)? else {
-                    return Err(ParserError::UnexpectedToken {
-                        expected: "CallRoot",
-                        found: self.peek().map(|t| t.kind).unwrap_or(TokenType::Eof),
-                        line: self.peek().map(|t| t.line),
-                    });
-                };
-
-                expr = Call {
-                    caller: Some(Box::new(expr)),
-                    name_id,
-                    args: vec![],
-                    block: None,
-                };
-            } else {
-                if self.parsing_mode == ParsingMode::Normal && self.is_match(&[Colon]) {
-                    let block = Some(Box::new(self.block(true, None)?));
-
-                    match expr {
-                        Call {
-                            caller,
-                            name_id,
-                            args,
-                            block: _,
-                        } => {
-                            expr = Call {
-                                caller,
-                                name_id,
-                                args,
-                                block,
-                            }
-                        }
-                        _ => {
-                            return Err(ParserError::UnexpectedBlock(
-                                self.previous().line,
-                                self.previous().kind,
-                            ));
-                        }
+                            span: self.peek().map(|t| t.span),
+                        });
                     };
+                    expr = Expression {
+                        id: self.next_id(),
+                        kind: Box::new(Call {
+                            callee,
+                            caller,
+                            block,
+                            args: self.argument_list()?,
+                            call_type: CallType::default(),
+                        }),
+                        span,
+                    }
+                }
+            } else if self.is_match(&[Not]) {
+                let span = self.previous().span;
+
+                if self.is_match(&[ParenClose]) {
+                    continue;
+                } else {
+                    let Call {
+                        caller,
+                        callee,
+                        block,
+                        ..
+                    } = *expr.kind
+                    else {
+                        return Err(ParserError::UnexpectedToken {
+                            expected: "Callee",
+                            found: self.peek().map(|t| t.kind).unwrap_or(TokenType::Eof),
+                            span: self.peek().map(|t| t.span),
+                        });
+                    };
+                    expr = Expression {
+                        id: self.next_id(),
+                        kind: Box::new(Call {
+                            callee,
+                            caller,
+                            block,
+                            args: self.argument_list()?,
+                            call_type: CallType::Strict,
+                        }),
+                        span,
+                    }
+                }
+            } else if self.is_match(&[Dot]) {
+                let span = self.previous().span;
+                let name = self.consume_name()?;
+
+                expr = Expression {
+                    id: self.next_id(),
+                    kind: Box::new(Call {
+                        callee: Some(expr),
+                        caller: name,
+                        args: vec![],
+                        block: None,
+                        call_type: CallType::default(),
+                    }),
+                    span,
+                }
+            } else if let (Some(Colon), ParsingMode::Normal) =
+                (self.peek().map(|t| t.kind), self.parsing_mode)
+            {
+                let Expression { kind, span, id } = expr;
+                let ExpressionKind::Call {
+                    callee,
+                    caller,
+                    args,
+                    call_type,
+                    ..
+                } = *kind
+                else {
+                    panic!("Unexpected expression at call!")
                 };
 
-                break;
+                return Ok(Expression {
+                    kind: Box::new(Call {
+                        callee,
+                        caller,
+                        args,
+                        call_type,
+                        block: Some(self.block(true, Some("Call block"))?),
+                    }),
+                    span,
+                    id,
+                });
+            } else {
+                return Ok(expr);
             }
         }
-
-        Ok(expr)
     }
 
-    fn primary(&mut self, use_same_call_entity: bool) -> ParserResult<Expression> {
-        use TokenType::{ClassSelf, Constant, Identifier, ParenClose, ParenOpen, Super, Wildcard};
+    fn argument_list(&mut self) -> ParserResult<Vec<Expression>> {
+        use TokenType::{Comma, ParenClose};
+
+        let mut list = vec![self.expression()?];
+
+        loop {
+            if self.is_match(&[Comma]) {
+                list.push(self.expression()?);
+            } else {
+                self.consume(ParenClose, "closing paranthesis for ending call")?;
+                return if list.len() > 50 {
+                    Err(ParserError::PatternListTooLong(self.previous().span))
+                } else {
+                    Ok(list)
+                };
+            }
+        }
+    }
+
+    fn primary(&mut self) -> ParserResult<Expression> {
+        use TokenType::{
+            ClassSelf, Constant, Identifier, ParenClose, ParenOpen, Pass, Super, Wildcard,
+        };
 
         Ok(if self.is_match(&[ParenOpen]) {
+            let span = self.previous().span;
+
             let expr = self.expression()?;
             self.consume(ParenClose, "End of Paranthesis")?;
-            Expression::Grouping(Box::new(expr))
+
+            Expression {
+                kind: Box::new(ExpressionKind::Grouping(expr)),
+                span,
+                id: self.next_id(),
+            }
         } else if self.is_match(&[ClassSelf]) {
-            Expression::ClassSelf
+            Expression {
+                kind: Box::new(ExpressionKind::ClassSelf),
+                span: self.previous().span,
+                id: self.next_id(),
+            }
         } else if self.is_match(&[Super]) {
-            Expression::Super
+            Expression {
+                kind: Box::new(ExpressionKind::Super),
+                span: self.previous().span,
+                id: self.next_id(),
+            }
+        } else if self.is_match(&[Pass]) {
+            Expression {
+                kind: Box::new(ExpressionKind::Pass),
+                span: self.previous().span,
+                id: self.next_id(),
+            }
         } else if self.is_match(&[Constant, Identifier, Wildcard]) {
-            Expression::Call {
-                name_id: self.consume_call_name(self.previous(), use_same_call_entity)?,
-                block: None,
-                caller: None,
-                args: vec![],
+            let token = self.previous();
+            let name = self.consume_name_from_token(&token)?;
+            Expression {
+                kind: Box::new(ExpressionKind::Call {
+                    caller: name,
+                    callee: None,
+                    args: vec![],
+                    block: None,
+                    call_type: CallType::default(),
+                }),
+                span: token.span,
+                id: self.next_id(),
             }
         } else {
-            Expression::Literal(self.catch_literal()?)
+            self.catch_literal()?
         })
     }
 
-    fn catch_literal(&mut self) -> ParserResult<LiteralIndex> {
+    fn catch_literal(&mut self) -> ParserResult<Expression> {
         use TokenType::*;
 
-        let res = if self.is_match(&[True]) {
-            Literal::Boolean(true)
+        if self.is_match(&[True]) {
+            Ok(Expression {
+                kind: Box::new(ExpressionKind::Literal(Rc::new(Literal::Boolean(true)))),
+                id: self.next_id(),
+                span: self.previous().span,
+            })
         } else if self.is_match(&[False]) {
-            Literal::Boolean(false)
+            Ok(Expression {
+                kind: Box::new(ExpressionKind::Literal(Rc::new(Literal::Boolean(false)))),
+                id: self.next_id(),
+                span: self.previous().span,
+            })
         } else if self.is_match(&[Integer, Float]) {
             let token = self.previous();
-            debug_assert!(token.kind == TokenType::Integer || token.kind == TokenType::Float);
-            let incomplete =
-                rug::Float::parse(self.lexemes[token.start..token.end].join("")).unwrap();
+            let incomplete = rug::Float::parse(token.unwrap_literal().as_ref()).unwrap();
             let number = rug::Float::with_val(literal::PRECISION, incomplete);
 
-            match token.kind {
-                Float => Literal::Float(number),
-                Integer => Literal::Integer(number),
-                _ => unreachable!(),
-            }
+            let literal = if token.kind == Float {
+                Literal::Float(number)
+            } else {
+                Literal::Integer(number)
+            };
+            Ok(Expression {
+                kind: Box::new(ExpressionKind::Literal(Rc::new(literal))),
+                id: self.next_id(),
+                span: token.span,
+            })
         } else if self.is_match(&[Str]) {
             let token = self.previous();
-            debug_assert!(token.kind == TokenType::Str);
-            let string = self.lexemes[token.start..token.end].join("");
-            Literal::Str(string)
-        } else if self.is_match(&[BraceOpen]) {
-            if self.is_match(&[BraceClose]) {
-                Literal::LiteralMap(AHashMap::new())
-            } else {
-                unimplemented!()
-            }
+            Ok(Expression {
+                kind: Box::new(ExpressionKind::Literal(Rc::new(Literal::Str(
+                    token.unwrap_literal(),
+                )))),
+                id: self.next_id(),
+                span: token.span,
+            })
         } else if self.is_match(&[BracketOpen]) {
             if self.is_match(&[BracketClose]) {
-                Literal::LiteralList(vec![])
+                Ok(Expression {
+                    kind: Box::new(ExpressionKind::Literal(Rc::new(Literal::LiteralList(
+                        vec![],
+                    )))),
+                    id: self.next_id(),
+                    span: self.previous().span,
+                })
             } else {
-                let mut list = vec![];
-
-                let first_expr = self.expression()?;
-
-                list.push(match self.eval_constexpr(&first_expr)? {
-                    Some(Expression::Literal(index)) => {
-                        let literal = self.literals.remove(&index).unwrap();
-                        Either::Right(literal)
-                    }
-                    Some(expr) => Either::Left(expr),
-                    None => Either::Left(first_expr),
-                });
+                let mut list = vec![self.expression()?];
 
                 while self.is_match(&[Comma]) {
-                    let expr = self.expression()?;
-
-                    list.push(match self.eval_constexpr(&expr)? {
-                        Some(Expression::Literal(index)) => {
-                            let literal = self.literals.remove(&index).unwrap();
-                            Either::Right(literal)
-                        }
-                        Some(expr) => Either::Left(expr),
-                        None => Either::Left(expr),
-                    });
+                    list.push(self.expression()?);
                 }
 
                 self.consume(BracketClose, "End of List")?;
 
-                Literal::LiteralList(list)
+                Ok(Expression {
+                    kind: Box::new(ExpressionKind::Literal(Rc::new(Literal::LiteralList(list)))),
+                    id: self.next_id(),
+                    span: self.previous().span,
+                })
+            }
+        } else if self.is_match(&[BraceOpen]) {
+            if self.is_match(&[BraceClose]) {
+                Ok(Expression {
+                    kind: Box::new(ExpressionKind::Literal(Rc::new(Literal::LiteralArray(
+                        vec![],
+                    )))),
+                    id: self.next_id(),
+                    span: self.previous().span,
+                })
+            } else {
+                let mut list = vec![self.expression()?];
+
+                while self.is_match(&[Comma]) {
+                    list.push(self.expression()?);
+                }
+
+                self.consume(BracketClose, "End of List")?;
+
+                Ok(Expression {
+                    kind: Box::new(ExpressionKind::Literal(Rc::new(Literal::LiteralArray(
+                        list,
+                    )))),
+                    id: self.next_id(),
+                    span: self.previous().span,
+                })
             }
         } else {
-            return Err(ParserError::UnexpectedToken {
+            Err(ParserError::UnexpectedToken {
                 expected: "Expression",
                 found: self.peek().unwrap().kind,
-                line: self.peek().map(|t| t.line),
-            });
-        };
-
-        let literal_index = self.next_literal_index();
-        self.push_literal(literal_index, res);
-        Ok(literal_index)
+                span: self.peek().map(|t| t.span),
+            })
+        }
     }
 
     fn peek(&self) -> Option<Token> {
@@ -780,7 +824,7 @@ impl<'a> Parser<'a> {
     fn look_at(&self, position: usize) -> Option<Token> {
         match self.tokens.get(position) {
             Some(token) if token.kind == TokenType::Eof => None,
-            Some(token) => Some(*token),
+            Some(token) => Some(token.clone()),
             None => None,
         }
     }
@@ -801,299 +845,116 @@ impl<'a> Parser<'a> {
             .is_some()
     }
 
-    fn consume(&mut self, kind: TokenType, expected: &'static str) -> ParserResult<()> {
-        if !self.is_match(&[kind]) {
-            let found = self.peek().map(|t| t.kind).unwrap_or(TokenType::Eof);
-            let line = self.peek().map(|t| t.line);
+    fn consume_one_of_these(
+        &mut self,
+        kind: &[TokenType],
+        expected: &'static str,
+    ) -> ParserResult<Token> {
+        if self.peek().is_none() {
+            Err(ParserError::UnexpectedToken {
+                expected,
+                found: TokenType::Eof,
+                span: None,
+            })
+        } else if !self.is_match(kind) {
+            let Token {
+                span, kind: found, ..
+            } = self.peek().unwrap();
 
-            return Err(ParserError::UnexpectedToken {
+            Err(ParserError::UnexpectedToken {
                 expected,
                 found,
-                line,
-            });
+                span: Some(span),
+            })
+        } else {
+            Ok(self.peek().unwrap())
         }
-
-        Ok(())
     }
 
-    fn consume_endline(&mut self) -> ParserResult<()> {
+    fn consume(&mut self, kind: TokenType, expected: &'static str) -> ParserResult<Token> {
+        self.consume_one_of_these(&[kind], expected)
+    }
+
+    fn consume_endline(&mut self) -> ParserResult<Token> {
         use TokenType::{Endline, Eof};
 
-        if !(self.is_match(&[Eof, Endline]) || self.peek().is_none()) {
-            let found = self.peek().map(|t| t.kind).unwrap_or(TokenType::Eof);
-            let line = self.peek().map(|t| t.line);
-
-            return Err(ParserError::UnexpectedToken {
-                expected: "End of Line",
-                found,
-                line,
-            });
-        }
-
-        Ok(())
+        self.consume_one_of_these(&[Eof, Endline], "End of line")
     }
 
-    fn consume_class_name(&mut self) -> ParserResult<EntityIndex> {
-        self.advance();
-        let name = self.allocate_name(self.previous());
-        match self
-            .global_entity
-            .find_sub_entity_by_name(&self.entities, &name)
-        {
-            Some(Entity { kind, .. }) if kind != &EntityKind::Class => {
-                panic!(
-                    "{} is already declared as a {:?}, not as a class!",
-                    name, kind
-                )
-            }
-            Some(_) => Err(ParserError::DuplicateClass(name, self.previous().line)),
-            None => {
-                let index = self.next_entity_index();
-                let entity = self.create_entity(
-                    index,
-                    name,
-                    self.previous(),
-                    EntityKind::Class,
-                    "Class Name",
-                )?;
-                self.entities.insert(index, entity);
-                self.global_entity.sub_entities.push(index);
-                self.current_class_index = index;
-                Ok(index)
-            }
-        }
-    }
+    fn consume_class_name(&mut self) -> ParserResult<(Span, Rc<String>)> {
+        let class_token = self.advance();
+        let name = class_token.unwrap_literal();
 
-    fn consume_declaration_name(&mut self) -> ParserResult<EntityIndex> {
-        self.advance();
-        let name = self.allocate_name(self.previous());
-        match self
-            .entities
-            .get(&self.current_class_index)
-            .and_then(|entity| entity.find_sub_entity_by_name(&self.entities, &name))
-        {
-            Some(Entity { kind, .. }) if kind != &EntityKind::Declaration => {
-                panic!(
-                    "{} is already declared as a {:?}, not as a declaration!",
-                    name, kind
-                )
-            }
-            Some(Entity { index, .. }) => {
-                self.current_declaration_index = *index;
-                Ok(*index)
-            }
-            None => {
-                let index = self.next_entity_index();
-                let entity = self.create_entity(
-                    index,
-                    name,
-                    self.previous(),
-                    EntityKind::Declaration,
-                    "Declaration Name",
-                )?;
-                let Some(class_entity) = self.entities.get_mut(&self.current_class_index) else {
-                    panic!(
-                        "Current Class Index {:?} doesn't exist!",
-                        self.current_class_index
-                    )
-                };
-                class_entity.sub_entities.push(index);
-                self.entities.insert(index, entity);
-                self.current_declaration_index = index;
-                Ok(index)
-            }
-        }
-    }
-
-    fn consume_local_name(&mut self, token: Token) -> ParserResult<EntityIndex> {
-        let name = self.allocate_name(self.previous());
-        match self
-            .entities
-            .get(&self.current_declaration_index)
-            .and_then(|entity| entity.find_sub_entity_by_name(&self.entities, &name))
-        {
-            Some(Entity { kind, .. }) if kind != &EntityKind::Local => {
-                panic!(
-                    "{} is already declared as a {:?}, not as a local!",
-                    name, kind
-                )
-            }
-            Some(_) => Err(ParserError::DuplicateLocal(name, self.previous().line)),
-            None => {
-                let index = self.next_entity_index();
-                let entity =
-                    self.create_entity(index, name, token, EntityKind::Local, "Local Name")?;
-                let Some(declaration_entity) =
-                    self.entities.get_mut(&self.current_declaration_index)
-                else {
-                    panic!(
-                        "Current Declaration Index {:?} doesn't exist!",
-                        self.current_declaration_index
-                    )
-                };
-                if declaration_entity.kind != EntityKind::Declaration {
-                    panic!(
-                        "Current Declaration Index {:?} is not a declaration! It is a {:?}",
-                        self.current_declaration_index, declaration_entity.kind
-                    )
-                }
-                declaration_entity.sub_entities.push(index);
-                self.entities.insert(index, entity);
-                self.current_local_index = index;
-                Ok(index)
-            }
-        }
-    }
-
-    fn consume_call_name(
-        &mut self,
-        token: Token,
-        use_same_entity: bool,
-    ) -> ParserResult<EntityIndex> {
-        let name = self.allocate_name(self.previous());
-        let parent_index = if self.current_local_index == EntityIndex(0) {
-            self.current_declaration_index
+        if self.classes.contains_key(name.as_ref()) {
+            Err(ParserError::DuplicateClass(name, class_token.span))
         } else {
-            self.current_local_index
-        };
-        match self
-            .entities
-            .get(&self.current_declaration_index)
-            .and_then(|entity| entity.find_sub_entity_by_name(&self.entities, &name))
-        {
-            Some(Entity { kind, .. }) if kind != &EntityKind::Call => {
-                panic!(
-                    "{} is already declared as a {:?}, not as a call!",
-                    name, kind
-                )
-            }
-            Some(Entity { index, name, .. }) if (use_same_entity || name == "_") => Ok(*index),
-            _ => {
-                let index = self.next_entity_index();
-                let entity =
-                    self.create_entity(index, name, token, EntityKind::Call, "CallRoot")?;
-                let Some(parent) = self.entities.get_mut(&parent_index) else {
-                    panic!("Current Index {:?} doesn't exist!", index)
-                };
-                parent.sub_entities.push(index);
-                self.entities.insert(index, entity);
-                Ok(index)
-            }
+            Ok((class_token.span, name))
         }
     }
 
-    fn next_entity_index(&self) -> EntityIndex {
-        EntityIndex(self.entities.len() + 1)
+    fn consume_name(&mut self) -> ParserResult<Rc<String>> {
+        let token = self.advance();
+        self.consume_name_from_token(&token)
     }
 
-    fn consume_decorator(&mut self) -> ParserResult<String> {
+    fn consume_name_from_token(&mut self, token: &Token) -> ParserResult<Rc<String>> {
+        let name = token.unwrap_literal();
+
+        if let Some(name) = self
+            .current_class
+            .methods
+            .keys()
+            .find(|i| *i == &name)
+            .or(self
+                .current_class
+                .ancestors
+                .iter()
+                .find(|i| *i == &name)
+                .or(self.classes.keys().find(|i| *i == &name)))
+        {
+            Ok(name.clone())
+        } else {
+            Ok(name)
+        }
+    }
+
+    fn consume_decorator(&mut self) -> ParserResult<Rc<String>> {
         use TokenType::Decorator;
 
         if self.is_match(&[Decorator]) {
             let token = self.peek().unwrap();
 
-            let res = self.lexemes[token.start..token.end].join("");
+            let res = token.unwrap_literal().clone();
             self.advance();
             self.consume_endline()?;
             Ok(res)
         } else {
-            Ok(String::new())
+            Ok(Rc::new(String::new()))
         }
     }
 
-    fn create_entity(
-        &mut self,
-        index: EntityIndex,
-        name: String,
-        token: Token,
-        kind: EntityKind,
-        expected: &'static str,
-    ) -> ParserResult<Entity> {
-        use ParserError::UnexpectedToken;
-        use TokenType::{Constant, Identifier, Wildcard};
-
-        match token.kind {
-            Constant | Identifier | Wildcard => {
-                let visibility = Visibility::from(token.kind);
-
-                Ok(Entity {
-                    index,
-                    name,
-                    visibility,
-                    kind,
-                    sub_entities: vec![],
-                })
-            }
-            _ => Err(UnexpectedToken {
-                expected,
-                found: token.kind,
-                line: Some(token.line),
-            }),
-        }
-    }
-
-    fn allocate_name(&mut self, token: Token) -> String {
-        self.lexemes[token.start..token.end].join("")
-    }
-
-    fn push_literal(&mut self, index: LiteralIndex, literal: Literal) {
-        self.literals.insert(index, literal);
-    }
-
-    fn next_literal_index(&self) -> LiteralIndex {
-        self.literals
-            .keys()
-            .max()
-            .map(|index| LiteralIndex(index.0 + 1))
-            .unwrap_or(LiteralIndex(0))
-    }
-
-    fn push_method(
-        &mut self,
-        name: EntityIndex,
-        params: Vec<Pattern>,
-        return_type: Option<Expression>,
-        body: Expression,
-        environment: AHashMap<EntityIndex, Vec<Function>>,
-        decorator: String,
-    ) {
-        let function = Function {
-            name,
-            params,
-            return_type,
-            body,
-            environment: Some(environment),
-            decorator,
-        };
-        if let Some(functions) = self.current_methods.get_mut(&name) {
-            functions.push(function);
-        } else {
-            self.current_methods.insert(name, vec![function]);
-        }
-    }
-
-    fn push_function(
-        &mut self,
-        name: EntityIndex,
-        params: Vec<Pattern>,
-        return_type: Option<Expression>,
-        body: Expression,
-        decorator: String,
-    ) {
-        let function = Function {
-            name,
-            params,
-            return_type,
-            body,
-            environment: None,
-            decorator,
-        };
-        if let Some(functions) = self.current_environment.get_mut(&name) {
-            functions.push(function);
-        } else {
-            self.current_environment.insert(name, vec![function]);
-        }
-    }
+    // fn push_function(
+    //     &mut self,
+    //     name: EntityIndex,
+    //     params: Vec<Pattern>,
+    //     return_type: Option<Expression>,
+    //     body: Expression,
+    //     decorator: String,
+    // ) {
+    //     let function = Function {
+    //         name,
+    //         params,
+    //         return_type,
+    //         body,
+    //         environment: None,
+    //         decorator,
+    //     };
+    //     if let Some(functions) = self.current_environment.get_mut(&name) {
+    //         functions.push(function);
+    //     } else {
+    //         self.current_environment.insert(name, vec![function]);
+    //     }
+    // }
 
     fn skip_while(&mut self, kinds: &[TokenType]) {
         while kinds.contains(&self.peek().map(|t| t.kind).unwrap_or(TokenType::Eof)) {
@@ -1101,92 +962,194 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn eval_constexpr(&mut self, expr: &Expression) -> ParserResult<Option<Expression>> {
-        use operator::*;
-        use Expression::*;
+    fn next_id(&mut self) -> usize {
+        let id = self.last_expr_id;
+        self.last_expr_id += 1;
+        id
+    }
 
-        let next_literal_index = self.next_literal_index();
-        Ok(match expr {
-            Literal(index) => Some(Expression::Literal(*index)),
-            Grouping(expr) => self.eval_constexpr(expr)?,
+    fn eliminate_expr(&mut self, expr: Expression) -> Expression {
+        use operator::*;
+        use ExpressionKind::*;
+
+        let Expression {
+            kind: expr_kind,
+            span: expr_span,
+            id: expr_id,
+        } = expr;
+
+        match *expr_kind {
+            Literal(literal) => Expression {
+                kind: Box::new(Literal(literal)),
+                span: expr_span,
+                id: expr_id,
+            },
+            Grouping(expr) => self.eliminate_expr(expr),
             Block {
                 expressions,
                 value,
                 params,
-            } if expressions.is_empty() && params.is_empty() => self.eval_constexpr(value)?,
-            Binary(lhs, op, rhs) => {
-                let Some(Literal(lhs_index)) = self.eval_constexpr(lhs)? else {
-                    return Ok(None);
-                };
-                let Some(Literal(rhs_index)) = self.eval_constexpr(rhs)? else {
-                    return Ok(None);
-                };
-                let lhs = self.get_literal(lhs_index);
-                let rhs = self.get_literal(rhs_index);
-                (match op {
-                    Operator::Add => lhs + rhs,
-                    Operator::Substract => lhs - rhs,
-                    Operator::Multiply => lhs * rhs,
-                    Operator::Divide => lhs / rhs,
-                    Operator::Modulo => lhs % rhs,
-                    Operator::And => lhs.and(rhs),
-                    Operator::Or => lhs.or(rhs),
-                    Operator::In => lhs.in_operator(rhs),
-                    Operator::Equal => lhs.is_equal(rhs),
-                    Operator::NotEqual => lhs.is_not_equal(rhs),
-                    Operator::Greater => lhs.greater(rhs),
-                    Operator::GreaterOrEqual => lhs.greater_equal(rhs),
-                    Operator::Smaller => lhs.less(rhs),
-                    Operator::SmallerOrEqual => lhs.less_equal(rhs),
-                    _ => unreachable!(),
-                })
-                .map(|literal| {
-                    self.literals.remove(&lhs_index);
-                    self.literals.remove(&rhs_index);
-                    self.push_literal(next_literal_index, literal);
-                    Literal(next_literal_index)
-                })
+            } if expressions.is_empty() && params.is_empty() => self.eliminate_expr(value),
+            Binary(lhs_expr, op, rhs_expr) => {
+                if let (Literal(ref lhs), Literal(ref rhs)) =
+                    (lhs_expr.kind.as_ref(), rhs_expr.kind.as_ref())
+                {
+                    let Some(literal) = (match op {
+                        Operator::Add => lhs.as_ref() + rhs.as_ref(),
+                        Operator::Substract => lhs.as_ref() - rhs.as_ref(),
+                        Operator::Multiply => lhs.as_ref() * rhs.as_ref(),
+                        Operator::Divide => lhs.as_ref() / rhs.as_ref(),
+                        Operator::Modulo => lhs.as_ref() % rhs.as_ref(),
+                        Operator::And => lhs.as_ref() & rhs.as_ref(),
+                        Operator::Or => lhs.as_ref() | rhs.as_ref(),
+                        Operator::In => lhs.as_ref().in_operator(rhs.as_ref()),
+                        Operator::Equal => lhs.as_ref().is_equal(rhs.as_ref()),
+                        Operator::NotEqual => lhs.as_ref().is_not_equal(rhs.as_ref()),
+                        Operator::Greater => lhs.as_ref().greater(rhs.as_ref()),
+                        Operator::GreaterOrEqual => lhs.as_ref().greater_equal(rhs.as_ref()),
+                        Operator::Smaller => lhs.as_ref().less(rhs.as_ref()),
+                        Operator::SmallerOrEqual => lhs.as_ref().less_equal(rhs.as_ref()),
+                        _ => unreachable!(),
+                    }) else {
+                        return Expression {
+                            kind: Box::new(Binary(lhs_expr, op, rhs_expr)),
+                            span: expr_span,
+                            id: expr_id,
+                        };
+                    };
+                    Expression {
+                        kind: Box::new(Literal(Rc::new(literal))),
+                        id: lhs_expr.id,
+                        span: lhs_expr.span,
+                    }
+                } else {
+                    Expression {
+                        kind: Box::new(Binary(lhs_expr, op, rhs_expr)),
+                        span: expr_span,
+                        id: expr_id,
+                    }
+                }
             }
             Unary(op, expression) => {
-                let Some(Literal(expr_index)) = self.eval_constexpr(expression)? else {
-                    return Ok(None);
-                };
-                let expr = self.get_literal(expr_index);
-                (match op {
-                    Operator::Not => !expr,
-                    Operator::Negate => -expr,
-                    _ => unreachable!(),
-                })
-                .map(|literal| {
-                    self.literals.remove(&expr_index);
-                    self.push_literal(next_literal_index, literal);
-                    Literal(next_literal_index)
-                })
+                let Expression { kind, span, id } = self.eliminate_expr(expression);
+
+                if let Literal(ref literal) = kind.as_ref() {
+                    let Some(result_literal) = (match op {
+                        Operator::Not => !literal.as_ref(),
+                        Operator::Negate => -literal.as_ref(),
+                        _ => unreachable!(),
+                    }) else {
+                        return Expression { kind, span, id };
+                    };
+                    Expression {
+                        kind: Box::new(Literal(Rc::new(result_literal))),
+                        span: span,
+                        id: id,
+                    }
+                } else {
+                    Expression { kind, span, id }
+                }
             }
             IndexOperator(container, search) => {
-                let Some(Literal(container_index)) = self.eval_constexpr(container)? else {
-                    return Ok(None);
-                };
-                let Some(Literal(search_index)) = self.eval_constexpr(search)? else {
-                    return Ok(None);
-                };
-                let container = self.get_literal(container_index);
-                let search = self.get_literal(search_index);
+                let Expression {
+                    kind: container_kind,
+                    span: container_span,
+                    id: container_id,
+                } = self.eliminate_expr(container);
+                let search = self.eliminate_expr(search);
 
-                container.get(search).map(|literal| {
-                    self.literals.remove(&container_index);
-                    self.literals.remove(&search_index);
-                    match literal {
-                        Either::Left(expr) => expr,
-                        Either::Right(literal) => {
-                            self.push_literal(next_literal_index, literal);
-                            Literal(next_literal_index)
-                        }
+                if let (Literal(container_literal), Literal(search_literal)) =
+                    (container_kind.as_ref(), search.kind.as_ref())
+                {
+                    match container_literal.get(&search_literal) {
+                        Some(result_expression) => result_expression,
+                        _ => Expression {
+                            kind: Box::new(IndexOperator(
+                                Expression {
+                                    kind: container_kind,
+                                    span: container_span.clone(),
+                                    id: container_id,
+                                },
+                                search,
+                            )),
+                            span: container_span,
+                            id: container_id,
+                        },
                     }
-                })
-            }
+                } else {
+                    Expression {
+                        kind: Box::new(IndexOperator(
+                            Expression {
+                                kind: container_kind,
+                                span: container_span.clone(),
+                                id: container_id,
+                            },
+                            search,
+                        )),
 
-            _ => None,
-        })
+                        span: expr_span,
+                        id: expr_id,
+                    }
+                }
+            }
+            Function(function) => {
+                let return_type = function.return_type.map(|expr| self.eliminate_expr(expr));
+                let body = self.eliminate_expr(function.body);
+
+                Expression {
+                    kind: Box::new(Function(crate::function::Function {
+                        return_type,
+                        body,
+                        ..function
+                    })),
+                    span: expr_span,
+                    id: expr_id,
+                }
+            }
+            Match { scrutinee, arms } => {
+                let scrutinee = self.eliminate_expr(scrutinee);
+                let arms = arms
+                    .into_iter()
+                    .map(|(pattern, expr)| (pattern, self.eliminate_expr(expr)))
+                    .collect();
+
+                Expression {
+                    kind: Box::new(Match { scrutinee, arms }),
+                    span: expr_span,
+                    id: expr_id,
+                }
+            }
+            Call {
+                callee,
+                args,
+                block,
+                caller,
+                call_type,
+            } => {
+                let callee = callee.map(|expr| self.eliminate_expr(expr));
+                let args = args
+                    .into_iter()
+                    .map(|expr| self.eliminate_expr(expr))
+                    .collect();
+                let block = block.map(|expr| self.eliminate_expr(expr));
+
+                Expression {
+                    kind: Box::new(Call {
+                        callee,
+                        args,
+                        block,
+                        caller,
+                        call_type,
+                    }),
+                    span: expr_span,
+                    id: expr_id,
+                }
+            }
+            kind => Expression {
+                kind: Box::new(kind),
+                span: expr_span,
+                id: expr_id,
+            },
+        }
     }
 }
