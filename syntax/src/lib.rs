@@ -267,11 +267,11 @@ impl Parser {
             Expression {
                 kind: Box::new(ExpressionKind::Block {
                     expressions,
-                    value: value,
+                    value,
                     params,
                 }),
                 id: self.next_id(),
-                span: span,
+                span,
             }
         })
     }
@@ -1043,8 +1043,8 @@ impl Parser {
                     };
                     Expression {
                         kind: Box::new(Literal(Rc::new(result_literal))),
-                        span: span,
-                        id: id,
+                        span,
+                        id,
                     }
                 } else {
                     Expression { kind, span, id }
