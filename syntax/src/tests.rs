@@ -89,7 +89,7 @@ Program:
         ));
 
         assert!(matches!(
-            *parser.eliminate_expr(result).kind,
+            *Parser::eliminate_expr(result).kind,
             ExpressionKind::Literal(num) if num.as_ref() == &Literal::Integer(number(420.0 + 60.0)).into(),
         ));
     }

@@ -115,7 +115,8 @@ impl Parser {
         };
 
         if self.is_match(&[Endline]) {
-            Ok(self.current_class.constructors.push((name, patterns)))
+            self.current_class.constructors.push((name, patterns));
+            Ok(())
         } else {
             let return_type = if self.is_match(&[Arrow]) {
                 Some(self.or()?)
@@ -126,7 +127,7 @@ impl Parser {
             let token = self.consume(Declaration, "Equal sign")?;
 
             let body = self.block(false, Some("Method Definition"))?;
-            let body = self.eliminate_expr(body);
+            let body = Self::eliminate_expr(body);
 
             let method = Function {
                 name: name.clone(),
@@ -137,12 +138,12 @@ impl Parser {
                 span: token.span,
             };
 
-            Ok(self
-                .current_class
+            self.current_class
                 .methods
                 .entry(name)
                 .or_default()
-                .push(method))
+                .push(method);
+            Ok(())
         }
     }
 
@@ -216,7 +217,7 @@ impl Parser {
             Ok(Pattern {
                 name: PatternName::NoName,
                 value: expr,
-                condition: condition,
+                condition,
             })
         }
     }
@@ -311,7 +312,7 @@ impl Parser {
 
             expr = Expression {
                 kind: Box::new(ExpressionKind::Function(Function {
-                    name: name,
+                    name,
                     params,
                     return_type,
                     body: value,
@@ -354,10 +355,7 @@ impl Parser {
             };
 
             Ok(Expression {
-                kind: Box::new(ExpressionKind::Match {
-                    scrutinee: scrutinee,
-                    arms,
-                }),
+                kind: Box::new(ExpressionKind::Match { scrutinee, arms }),
                 id: self.next_id(),
                 span,
             })
@@ -840,7 +838,7 @@ impl Parser {
     fn is_match(&mut self, kinds: &[TokenType]) -> bool {
         kinds
             .iter()
-            .any(|kind| self.peek().map_or(false, |token| token.kind == *kind))
+            .any(|kind| self.peek().is_some_and(|token| token.kind == *kind))
             .then(|| self.advance())
             .is_some()
     }
@@ -968,7 +966,7 @@ impl Parser {
         id
     }
 
-    fn eliminate_expr(&mut self, expr: Expression) -> Expression {
+    fn eliminate_expr(expr: Expression) -> Expression {
         use operator::*;
         use ExpressionKind::*;
 
@@ -984,12 +982,12 @@ impl Parser {
                 span: expr_span,
                 id: expr_id,
             },
-            Grouping(expr) => self.eliminate_expr(expr),
+            Grouping(expr) => Self::eliminate_expr(expr),
             Block {
                 expressions,
                 value,
                 params,
-            } if expressions.is_empty() && params.is_empty() => self.eliminate_expr(value),
+            } if expressions.is_empty() && params.is_empty() => Self::eliminate_expr(value),
             Binary(lhs_expr, op, rhs_expr) => {
                 if let (Literal(ref lhs), Literal(ref rhs)) =
                     (lhs_expr.kind.as_ref(), rhs_expr.kind.as_ref())
@@ -1031,7 +1029,7 @@ impl Parser {
                 }
             }
             Unary(op, expression) => {
-                let Expression { kind, span, id } = self.eliminate_expr(expression);
+                let Expression { kind, span, id } = Self::eliminate_expr(expression);
 
                 if let Literal(ref literal) = kind.as_ref() {
                     let Some(result_literal) = (match op {
@@ -1055,13 +1053,13 @@ impl Parser {
                     kind: container_kind,
                     span: container_span,
                     id: container_id,
-                } = self.eliminate_expr(container);
-                let search = self.eliminate_expr(search);
+                } = Self::eliminate_expr(container);
+                let search = Self::eliminate_expr(search);
 
                 if let (Literal(container_literal), Literal(search_literal)) =
                     (container_kind.as_ref(), search.kind.as_ref())
                 {
-                    match container_literal.get(&search_literal) {
+                    match container_literal.get(search_literal) {
                         Some(result_expression) => result_expression,
                         _ => Expression {
                             kind: Box::new(IndexOperator(
@@ -1093,8 +1091,8 @@ impl Parser {
                 }
             }
             Function(function) => {
-                let return_type = function.return_type.map(|expr| self.eliminate_expr(expr));
-                let body = self.eliminate_expr(function.body);
+                let return_type = function.return_type.map(Self::eliminate_expr);
+                let body = Self::eliminate_expr(function.body);
 
                 Expression {
                     kind: Box::new(Function(crate::function::Function {
@@ -1107,10 +1105,10 @@ impl Parser {
                 }
             }
             Match { scrutinee, arms } => {
-                let scrutinee = self.eliminate_expr(scrutinee);
+                let scrutinee = Self::eliminate_expr(scrutinee);
                 let arms = arms
                     .into_iter()
-                    .map(|(pattern, expr)| (pattern, self.eliminate_expr(expr)))
+                    .map(|(pattern, expr)| (pattern, Self::eliminate_expr(expr)))
                     .collect();
 
                 Expression {
@@ -1126,12 +1124,9 @@ impl Parser {
                 caller,
                 call_type,
             } => {
-                let callee = callee.map(|expr| self.eliminate_expr(expr));
-                let args = args
-                    .into_iter()
-                    .map(|expr| self.eliminate_expr(expr))
-                    .collect();
-                let block = block.map(|expr| self.eliminate_expr(expr));
+                let callee = callee.map(Self::eliminate_expr);
+                let args = args.into_iter().map(Self::eliminate_expr).collect();
+                let block = block.map(Self::eliminate_expr);
 
                 Expression {
                     kind: Box::new(Call {
