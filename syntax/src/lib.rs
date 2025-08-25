@@ -330,23 +330,27 @@ impl Parser {
     fn match_expr(&mut self) -> ParserResult<Expression> {
         use TokenType::{Colon, Dedent, Endline, FatArrow, Indent, Match};
         if self.is_match(&[Match]) {
-            let span = self.previous().span;
-            let scrutinee = self.expression()?;
+            let parsing_mode_before = self.parsing_mode;
+            self.parsing_mode = ParsingMode::NoBlock;
+            let mut parser = guard(self, |parser| parser.parsing_mode = parsing_mode_before);
 
-            self.consume(Colon, ": symbol")?;
-            self.consume_endline()?;
-            self.consume(Indent, "Indendation start")?;
+            let span = parser.previous().span;
+            let scrutinee = parser.expression()?;
+
+            parser.consume(Colon, ": symbol")?;
+            parser.consume_endline()?;
+            parser.consume(Indent, "Indendation start")?;
 
             let arms = {
                 let mut arms = vec![];
 
-                while !self.is_match(&[Dedent]) {
-                    self.skip_while(&[Endline]);
-                    let pattern = self.pattern()?;
+                while !parser.is_match(&[Dedent]) {
+                    parser.skip_while(&[Endline]);
+                    let pattern = parser.pattern()?;
 
-                    self.consume(FatArrow, "The Fat Arrow (=>)")?;
+                    parser.consume(FatArrow, "The Fat Arrow (=>)")?;
 
-                    let expr = self.block(true, None)?;
+                    let expr = parser.block(true, None)?;
 
                     arms.push((pattern, expr));
                 }
@@ -356,7 +360,7 @@ impl Parser {
 
             Ok(Expression {
                 kind: Box::new(ExpressionKind::Match { scrutinee, arms }),
-                id: self.next_id(),
+                id: parser.next_id(),
                 span,
             })
         } else {
@@ -854,7 +858,9 @@ impl Parser {
                 found: TokenType::Eof,
                 span: None,
             })
-        } else if !self.is_match(kind) {
+        } else if self.is_match(kind) {
+            Ok(self.previous())
+        } else {
             let Token {
                 span, kind: found, ..
             } = self.peek().unwrap();
@@ -864,8 +870,6 @@ impl Parser {
                 found,
                 span: Some(span),
             })
-        } else {
-            Ok(self.peek().unwrap())
         }
     }
 
