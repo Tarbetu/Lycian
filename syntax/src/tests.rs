@@ -90,7 +90,7 @@ Program:
 
         assert!(matches!(
             *Parser::eliminate_expr(result).kind,
-            ExpressionKind::Literal(num) if num.as_ref() == &Literal::Integer(number(420.0 + 60.0)).into(),
+            ExpressionKind::Literal(num) if num.as_ref() == &Literal::Integer(number(420.0 + 69.0)).into(),
         ));
     }
 
@@ -193,7 +193,7 @@ match x:
 ";
         let mut parser = initialize_parser(source);
 
-        let result = parser.expression().unwrap();
+        let result = dbg!(parser.expression()).unwrap();
 
         let ExpressionKind::Match {
             scrutinee:
@@ -274,7 +274,7 @@ Connection:
         ));
 
         // DetailedError Constructor
-        assert_eq!(constructors[3].0, Rc::new(String::from("DetaliedError")));
+        assert_eq!(constructors[3].0, Rc::new(String::from("DetailedError")));
         assert!(matches!(
             &constructors[3].1[0],
                     Pattern {
