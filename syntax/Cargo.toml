@@ -1,13 +1,10 @@
 [package]
-name = "parser"
+name = "syntax"
 version = "0.1.0"
 edition = "2021"
-license = "LGPL-3.0-or-later"
 
 [dependencies]
 ahash = "0.8.11"
-either = "1.13.0"
 rug = "1.26.1"
 scanner = { path = "../scanner" }
 scopeguard = "1.2.0"
-unicode-segmentation = "1.12.0"
