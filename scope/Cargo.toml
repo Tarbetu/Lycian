@@ -1,0 +1,10 @@
+[package]
+name = "scope"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+synonym = "0.1.6"
+syntax = { path = "../syntax" }
+scanner = { path = "../scanner" }
+ahash = "0.8.12"

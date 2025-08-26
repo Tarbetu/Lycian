@@ -10,7 +10,11 @@ pub struct Span {
 
 impl Display for Span {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} on {} [at {}]", self.file, self.line, self.position)
+        write!(
+            f,
+            "{} on {} (at position {})",
+            self.file, self.line, self.position
+        )
     }
 }
 
