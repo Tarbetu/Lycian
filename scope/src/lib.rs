@@ -1,6 +1,7 @@
 mod binding;
 mod error;
 mod hierarchy;
+mod name_resolver;
 mod scope;
 
 use synonym::Synonym;
@@ -35,30 +36,15 @@ pub enum SyntaxNode<'a> {
 }
 
 impl<'a> SyntaxNode<'a> {
-    pub fn name(&'a self) -> &'a Rc<String> {
-        use SyntaxNode::*;
-        match self {
-            Class(class) => &class.name,
-            Function(function) => &function.name,
-            Method(functions) => &functions[0].name,
-            Expression(syntax::Expression { kind: kind, .. }) => match kind.as_ref() {
-                syntax::ExpressionKind::Function(syntax::Function { name, .. }) => name,
-                syntax::ExpressionKind::Block { .. } => unimplemented!(),
-                _ => unreachable!(),
-            },
-            Constructor((name, _)) => name,
-            Root => unimplemented!(),
-        }
-    }
-
     pub fn span(&self) -> scanner::Span {
         match self {
+            SyntaxNode::Root => unreachable!(),
             SyntaxNode::Class(class) => class.span.clone(),
             SyntaxNode::Function(function) => function.span.clone(),
             SyntaxNode::Method(functions) => functions[0].span.clone(),
             SyntaxNode::Expression(expr) => expr.span.clone(),
             SyntaxNode::Constructor((_, patterns)) => patterns[0].value.span.clone(),
-            SyntaxNode::Root => unreachable!(),
+            SyntaxNode::Pattern(pattern) => pattern.value.span.clone(),
         }
     }
 }

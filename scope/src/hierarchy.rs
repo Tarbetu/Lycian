@@ -37,14 +37,6 @@ impl Default for Hierarchy<'_> {
 }
 
 impl<'a> Hierarchy<'a> {
-    pub(crate) fn root(&'a self) -> &'a Scope<'a> {
-        self.scopes.get(&ROOT_ID).unwrap()
-    }
-
-    pub(crate) fn root_mut(&'a mut self) -> &'a mut Scope<'a> {
-        self.scopes.get_mut(&ROOT_ID).unwrap()
-    }
-
     pub(crate) fn build(mut self, classes: &'a [syntax::Class]) -> ScopeResult<Self> {
         let mut root = self.scopes.remove(&ROOT_ID).unwrap();
 
@@ -132,7 +124,7 @@ impl<'a> Hierarchy<'a> {
             for method_overload in method_overloads {
                 let overload_id = self.next_id();
 
-                self.build_patterns(&method_overload.params, overload_id);
+                self.build_patterns(&method_overload.params, overload_id)?;
                 self.build_expression(&method_overload.body, overload_id)?;
 
                 self.scopes.insert(
@@ -219,7 +211,7 @@ impl<'a> Hierarchy<'a> {
 
                 self.push_children(parent_id, block_id);
 
-                self.build_patterns(params, block_id);
+                self.build_patterns(params, block_id)?;
                 for expression in expressions {
                     self.build_expression(expression, block_id)?
                 }
