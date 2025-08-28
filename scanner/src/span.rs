@@ -23,7 +23,7 @@ impl Span {
         Self {
             file: scanner.file.clone(),
             line: scanner.line,
-            position: position,
+            position,
         }
     }
 
@@ -42,9 +42,6 @@ impl Span {
     }
 
     pub fn variable_char(self, position: usize) -> Self {
-        Self {
-            position: position,
-            ..self
-        }
+        Self { position, ..self }
     }
 }

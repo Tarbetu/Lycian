@@ -38,7 +38,7 @@ impl<'a> Scanner<'a> {
             previous_indentation: 0,
             current_indentation: 0,
             is_beginning_of_line: true,
-            max: max,
+            max,
             catch_comments,
         }
     }
@@ -257,7 +257,7 @@ impl<'a> Scanner<'a> {
                 Some(&(current, "'")) => {
                     self.chars.next();
                     return if char_encountered != "'" {
-                        char_encountered.push_str("'");
+                        char_encountered.push('\'');
                         self.push(Token::char_literal(
                             Span::from_scanner(self, current + 1),
                             char_encountered,
@@ -299,7 +299,7 @@ impl<'a> Scanner<'a> {
                     }
                     "\n" => {
                         self.line += 1;
-                        content.push_str("\n");
+                        content.push('\n');
                         self.chars.next();
                     }
                     character => {
@@ -326,7 +326,7 @@ impl<'a> Scanner<'a> {
                     self.chars.next();
                 }
                 Some(&(_, ".")) => {
-                    content.push_str(".");
+                    content.push('.');
                     is_integer = false;
                     self.chars.next();
                 }
@@ -433,7 +433,7 @@ impl<'a> Scanner<'a> {
 
             let is_documentation = if let Some(&(_, "#")) = self.chars.peek() {
                 self.chars.next();
-                content.push_str("#");
+                content.push('#');
                 true
             } else {
                 false
@@ -446,7 +446,7 @@ impl<'a> Scanner<'a> {
 
                         if let Some(&(_, "#")) = self.chars.peek() {
                             self.chars.next();
-                            content.push_str("\n");
+                            content.push('\n');
                         } else {
                             return self.push(if is_documentation {
                                 Token::documentation(Span::from_scanner(self, index), content)
