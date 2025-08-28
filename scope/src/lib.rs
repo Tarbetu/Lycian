@@ -8,7 +8,7 @@ use synonym::Synonym;
 use std::rc::Rc;
 
 pub use binding::Binding;
-pub use error::ScopeError;
+pub use error::ScopeResult;
 pub use hierarchy::Hierarchy;
 pub use scope::Scope;
 
@@ -21,25 +21,48 @@ pub struct ScopeId(usize);
 #[derive(Synonym)]
 pub struct BindingId(usize);
 
+#[derive(Copy, Clone)]
 pub enum SyntaxNode<'a> {
+    Root,
     Class(&'a syntax::Class),
     Function(&'a syntax::Function),
+    // Because methods are overloadable
+    // Only used for bindings
+    Method(&'a [syntax::Function]),
     Expression(&'a syntax::Expression),
     Constructor(&'a (Rc<String>, Vec<syntax::Pattern>)),
-    Root,
+    Pattern(&'a syntax::Pattern),
 }
 
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
+impl<'a> SyntaxNode<'a> {
+    pub fn name(&'a self) -> &'a Rc<String> {
+        use SyntaxNode::*;
+        match self {
+            Class(class) => &class.name,
+            Function(function) => &function.name,
+            Method(functions) => &functions[0].name,
+            Expression(syntax::Expression { kind: kind, .. }) => match kind.as_ref() {
+                syntax::ExpressionKind::Function(syntax::Function { name, .. }) => name,
+                syntax::ExpressionKind::Block { .. } => unimplemented!(),
+                _ => unreachable!(),
+            },
+            Constructor((name, _)) => name,
+            Root => unimplemented!(),
+        }
     }
+
+    pub fn span(&self) -> scanner::Span {
+        match self {
+            SyntaxNode::Class(class) => class.span.clone(),
+            SyntaxNode::Function(function) => function.span.clone(),
+            SyntaxNode::Method(functions) => functions[0].span.clone(),
+            SyntaxNode::Expression(expr) => expr.span.clone(),
+            SyntaxNode::Constructor((_, patterns)) => patterns[0].value.span.clone(),
+            SyntaxNode::Root => unreachable!(),
+        }
+    }
+}
+
+pub fn build_scopes<'a>(classes: &'a [syntax::Class]) -> ScopeResult<Hierarchy<'a>> {
+    Hierarchy::default().build(classes)
 }

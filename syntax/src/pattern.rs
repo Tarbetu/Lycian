@@ -8,7 +8,7 @@ pub struct Pattern {
     pub condition: Option<Expression>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum PatternName {
     Name(Rc<String>),
     ClassSelf,

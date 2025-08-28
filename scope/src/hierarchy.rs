@@ -1,8 +1,11 @@
 use syntax::{Function, Pattern};
 
+use crate::binding::{Binding, BindingKind};
+use crate::error::{ScopeError, ScopeErrorKind};
+use crate::ScopeResult;
 use crate::{ExprId, ScopeId};
 use crate::{Scope, SyntaxNode};
-use ahash::AHashMap;
+use ahash::{AHashMap, HashSet, HashSetExt};
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -38,13 +41,15 @@ impl<'a> Hierarchy<'a> {
         self.scopes.get(&ROOT_ID).unwrap()
     }
 
-    pub(crate) fn build(mut self, classes: &'a [syntax::Class]) -> Self {
+    pub(crate) fn root_mut(&'a mut self) -> &'a mut Scope<'a> {
+        self.scopes.get_mut(&ROOT_ID).unwrap()
+    }
+
+    pub(crate) fn build(mut self, classes: &'a [syntax::Class]) -> ScopeResult<Self> {
         let mut root = self.scopes.remove(&ROOT_ID).unwrap();
 
         for class in classes {
             let class_scope_id = self.next_id();
-
-            root.children_ids.push(class_scope_id);
 
             self.scopes.insert(
                 class_scope_id,
@@ -56,20 +61,40 @@ impl<'a> Hierarchy<'a> {
                 },
             );
 
-            self.build_constructors(&class.constructors, class_scope_id);
-            self.build_methods(&class.methods, class_scope_id);
+            root.children_ids.push(class_scope_id);
+
+            root.bindings.insert(
+                syntax::PatternName::Name(class.name.clone()),
+                Binding::new(SyntaxNode::Class(class), class_scope_id, BindingKind::Class),
+            );
+
+            self.build_constructors(&class.constructors, class_scope_id)?;
+            self.build_methods(&class.methods, class_scope_id)?;
         }
 
         self.scopes.insert(ROOT_ID, root);
-        self
+        Ok(self)
     }
 
     fn build_constructors(
         &mut self,
         constructors: &'a [(Rc<String>, Vec<Pattern>)],
         class_scope_id: ScopeId,
-    ) {
+    ) -> ScopeResult<()> {
+        let mut constructor_names = HashSet::new();
         for constructor in constructors {
+            let node = SyntaxNode::Constructor(constructor);
+
+            if constructor_names.contains(&constructor.0) {
+                return Err(ScopeError {
+                    kind: ScopeErrorKind::DuplicateBinding,
+                    message: "Constructor already declared in class",
+                    scope_id: class_scope_id,
+                    span: node.span(),
+                });
+            }
+
+            constructor_names.insert(constructor.0.clone());
             let constructor_id = self.next_id();
 
             self.scopes.insert(
@@ -77,41 +102,74 @@ impl<'a> Hierarchy<'a> {
                 Scope {
                     id: constructor_id,
                     parent_id: class_scope_id,
-                    node: SyntaxNode::Constructor(constructor),
+                    node: node.clone(),
                     ..Scope::default()
                 },
             );
+            self.scopes
+                .get_mut(&class_scope_id)
+                .unwrap()
+                .bindings
+                .insert(
+                    syntax::PatternName::Name(constructor.0.clone()),
+                    Binding::new(node, class_scope_id, BindingKind::Constructor),
+                );
             self.push_children(class_scope_id, constructor_id);
         }
+
+        Ok(())
     }
 
+    // Methods are the only bindings that can be overloadable
+    // So, we are not checking for duplicates here
+    // However, we will need to check parameters in the type analysis
     fn build_methods(
         &mut self,
         methods: &'a AHashMap<Rc<String>, Vec<Function>>,
         class_scope_id: ScopeId,
-    ) {
-        for (_method_name, method_overloads) in methods {
+    ) -> ScopeResult<()> {
+        for (method_name, method_overloads) in methods {
             for method_overload in method_overloads {
-                let method_id = self.next_id();
+                let overload_id = self.next_id();
+
+                self.build_patterns(&method_overload.params, overload_id);
+                self.build_expression(&method_overload.body, overload_id)?;
 
                 self.scopes.insert(
-                    method_id,
+                    overload_id,
                     Scope {
-                        id: method_id,
+                        id: overload_id,
                         parent_id: class_scope_id,
                         node: SyntaxNode::Function(method_overload),
                         ..Scope::default()
                     },
                 );
 
-                self.push_children(class_scope_id, method_id);
-
-                self.build_expression(&method_overload.body, method_id)
+                self.push_children(class_scope_id, overload_id);
             }
+
+            self.scopes
+                .get_mut(&class_scope_id)
+                .unwrap()
+                .bindings
+                .insert(
+                    syntax::PatternName::Name(method_name.clone()),
+                    Binding::new(
+                        SyntaxNode::Method(method_overloads),
+                        class_scope_id,
+                        BindingKind::Method,
+                    ),
+                );
         }
+
+        Ok(())
     }
 
-    fn build_expression(&mut self, expression: &'a syntax::Expression, parent_id: ScopeId) {
+    fn build_expression(
+        &mut self,
+        expression: &'a syntax::Expression,
+        parent_id: ScopeId,
+    ) -> ScopeResult<()> {
         use syntax::ExpressionKind::*;
         match expression.kind.as_ref() {
             Function(function) => {
@@ -129,12 +187,22 @@ impl<'a> Hierarchy<'a> {
                 );
 
                 self.push_children(parent_id, function_id);
-                self.build_expression(&function.body, function_id);
+                self.build_patterns(&function.params, parent_id)?;
+                self.build_expression(&function.body, function_id)?;
+
+                self.scopes.get_mut(&parent_id).unwrap().bindings.insert(
+                    syntax::PatternName::Name(function.name.clone()),
+                    Binding::new(
+                        SyntaxNode::Function(function),
+                        parent_id,
+                        BindingKind::LocalFunction,
+                    ),
+                );
             }
             Block {
                 expressions,
                 value,
-                params: _params,
+                params,
             } => {
                 let block_id = self.next_id();
                 self.push_expr_id(expression.id, block_id);
@@ -150,28 +218,30 @@ impl<'a> Hierarchy<'a> {
                 );
 
                 self.push_children(parent_id, block_id);
+
+                self.build_patterns(params, block_id);
                 for expression in expressions {
-                    self.build_expression(expression, block_id);
+                    self.build_expression(expression, block_id)?
                 }
 
-                self.build_expression(value, block_id);
+                self.build_expression(value, block_id)?
             }
             Match { scrutinee, arms } => {
-                self.build_expression(scrutinee, parent_id);
+                self.build_expression(scrutinee, parent_id)?;
 
                 for (_pattern, expr) in arms {
-                    self.build_expression(expr, parent_id)
+                    self.build_expression(expr, parent_id)?
                 }
             }
             Binary(left, _, right) => {
-                self.build_expression(left, parent_id);
-                self.build_expression(right, parent_id);
+                self.build_expression(left, parent_id)?;
+                self.build_expression(right, parent_id)?;
             }
-            Unary(_, expr) => self.build_expression(expr, parent_id),
-            Grouping(expr) => self.build_expression(expr, parent_id),
+            Unary(_, expr) => self.build_expression(expr, parent_id)?,
+            Grouping(expr) => self.build_expression(expr, parent_id)?,
             IndexOperator(container, index) => {
-                self.build_expression(container, parent_id);
-                self.build_expression(index, parent_id);
+                self.build_expression(container, parent_id)?;
+                self.build_expression(index, parent_id)?;
             }
             Call {
                 callee,
@@ -180,17 +250,49 @@ impl<'a> Hierarchy<'a> {
                 ..
             } => {
                 if let Some(callee) = callee.as_ref() {
-                    self.build_expression(callee, parent_id);
+                    self.build_expression(callee, parent_id)?
                 }
                 if let Some(block) = block.as_ref() {
-                    self.build_expression(block, parent_id);
+                    self.build_expression(block, parent_id)?
                 }
                 for expr in args {
-                    self.build_expression(expr, parent_id)
+                    self.build_expression(expr, parent_id)?
                 }
             }
             _ => {}
         }
+
+        Ok(())
+    }
+
+    fn build_patterns(&mut self, patterns: &'a [Pattern], parent_id: ScopeId) -> ScopeResult<()> {
+        let mut pattern_names = HashSet::new();
+
+        for pattern in patterns {
+            if pattern.name == syntax::PatternName::NoName {
+                continue;
+            }
+
+            let node = SyntaxNode::Pattern(pattern);
+
+            if pattern_names.contains(&pattern.name) {
+                return Err(ScopeError {
+                    kind: ScopeErrorKind::DuplicateBinding,
+                    message: "Pattern already declared in function",
+                    scope_id: parent_id,
+                    span: node.span(),
+                });
+            }
+
+            pattern_names.insert(&pattern.name);
+
+            self.scopes.get_mut(&parent_id).unwrap().bindings.insert(
+                pattern.name.clone(),
+                Binding::new(node, parent_id, BindingKind::Argument),
+            );
+        }
+
+        Ok(())
     }
 
     fn push_expr_id(&mut self, expr_id: usize, scope_id: ScopeId) {

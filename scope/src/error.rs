@@ -8,10 +8,10 @@ pub type ScopeResult<T> = Result<T, ScopeError>;
 
 #[derive(Debug)]
 pub struct ScopeError {
-    kind: ScopeErrorKind,
-    message: &'static str,
-    scope_id: ScopeId,
-    span: Span,
+    pub kind: ScopeErrorKind,
+    pub message: &'static str,
+    pub scope_id: ScopeId,
+    pub span: Span,
 }
 
 #[derive(Debug)]
@@ -21,6 +21,7 @@ pub enum ScopeErrorKind {
     InvalidShadowing,
     Cycle,
     AmbiguousBinding,
+    DuplicateBinding,
 }
 
 impl Display for ScopeErrorKind {
@@ -31,6 +32,7 @@ impl Display for ScopeErrorKind {
             ScopeErrorKind::InvalidShadowing => write!(f, "Invalid shadowing"),
             ScopeErrorKind::Cycle => write!(f, "Cycle detected"),
             ScopeErrorKind::AmbiguousBinding => write!(f, "Ambiguous binding"),
+            ScopeErrorKind::DuplicateBinding => write!(f, "Duplicate binding"),
         }
     }
 }
