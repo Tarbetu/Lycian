@@ -63,8 +63,9 @@ fn resolve_function(
     fn_scope_id: ScopeId,
 ) -> ScopeResult<()> {
     let fn_scope = hierarchy.scopes.get(&fn_scope_id).unwrap();
+
     let SyntaxNode::Function(function) = fn_scope.node else {
-        panic!("Unexpected node kind!")
+        panic!("Unexpected syntax node kind!")
     };
     resolve_patterns(hierarchy, parent_id, &function.params)?;
 
@@ -211,13 +212,13 @@ fn resolve_pattern(
 ) -> ScopeResult<()> {
     match pattern.value.kind.as_ref() {
         syntax::ExpressionKind::Call { callee, caller, .. } => {
-            let (name, is_method) = extract_name_from_call(callee, caller, false, parent_id)?;
+            let (name, is_method) = extract_type_from_call(callee, caller, false, parent_id)?;
             match search_name(hierarchy, parent_id, &name) {
                 Some((scope_id, ResolvedReferenceStatus::Ok)) => {
                     if is_method {
                         add_resolved_name_to_scope(
                             hierarchy,
-                            scope_id,
+                            parent_id,
                             &name,
                             ResolvedReferenceStatus::CheckMethodCall,
                         );
@@ -292,7 +293,7 @@ fn search_name(
     }
 }
 
-fn extract_name_from_call(
+fn extract_type_from_call(
     callee: &Option<syntax::Expression>,
     caller: &Rc<String>,
     is_method: bool,
@@ -308,7 +309,7 @@ fn extract_name_from_call(
             });
         };
 
-        extract_name_from_call(callee, caller, true, scope_id)
+        extract_type_from_call(callee, caller, true, scope_id)
     } else {
         Ok((syntax::PatternName::Name(caller.clone()), is_method))
     }
