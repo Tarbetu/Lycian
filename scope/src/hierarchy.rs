@@ -18,9 +18,10 @@ pub struct Hierarchy<'a> {
 
 #[derive(Default)]
 pub struct DelayedScopes {
-    maybe_inherited: Vec<ScopeId>,
-    check_overload: Vec<ScopeId>,
-    type_mismatch: Vec<ScopeId>,
+    pub maybe_inherited: Vec<ScopeId>,
+    pub check_overload: Vec<ScopeId>,
+    pub type_mismatch: Vec<ScopeId>,
+    pub check_method_call: Vec<ScopeId>,
 }
 
 pub const ROOT_ID: ScopeId = ScopeId(0);
@@ -37,6 +38,14 @@ impl Default for Hierarchy<'_> {
 }
 
 impl<'a> Hierarchy<'a> {
+    pub fn root(&'a self) -> &'a Scope<'a> {
+        self.scopes.get(&ROOT_ID).unwrap()
+    }
+
+    pub fn root_mut(&'a mut self) -> &'a mut Scope<'a> {
+        self.scopes.get_mut(&ROOT_ID).unwrap()
+    }
+
     pub(crate) fn build(mut self, classes: &'a [syntax::Class]) -> ScopeResult<Self> {
         let mut root = self.scopes.remove(&ROOT_ID).unwrap();
 
@@ -182,6 +191,9 @@ impl<'a> Hierarchy<'a> {
                 self.build_patterns(&function.params, parent_id)?;
                 self.build_expression(&function.body, function_id)?;
 
+                self.expr_to_scope_id
+                    .insert(ExprId(expression.id), function_id);
+
                 self.scopes.get_mut(&parent_id).unwrap().bindings.insert(
                     syntax::PatternName::Name(function.name.clone()),
                     Binding::new(
@@ -208,6 +220,8 @@ impl<'a> Hierarchy<'a> {
                         ..Scope::default()
                     },
                 );
+                self.expr_to_scope_id
+                    .insert(ExprId(expression.id), block_id);
 
                 self.push_children(parent_id, block_id);
 

@@ -22,6 +22,7 @@ pub enum ScopeErrorKind {
     Cycle,
     AmbiguousBinding,
     DuplicateBinding,
+    InvalidPatternValue,
 }
 
 impl Display for ScopeErrorKind {
@@ -33,6 +34,7 @@ impl Display for ScopeErrorKind {
             ScopeErrorKind::Cycle => write!(f, "Cycle detected"),
             ScopeErrorKind::AmbiguousBinding => write!(f, "Ambiguous binding"),
             ScopeErrorKind::DuplicateBinding => write!(f, "Duplicate binding"),
+            ScopeErrorKind::InvalidPatternValue => write!(f, "Invalid Pattern Value"),
         }
     }
 }

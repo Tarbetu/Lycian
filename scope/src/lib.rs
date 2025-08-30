@@ -50,5 +50,5 @@ impl<'a> SyntaxNode<'a> {
 }
 
 pub fn build_scopes<'a>(classes: &'a [syntax::Class]) -> ScopeResult<Hierarchy<'a>> {
-    Hierarchy::default().build(classes)
+    name_resolver::resolve(Hierarchy::default().build(classes)?)
 }

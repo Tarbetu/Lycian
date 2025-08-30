@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::rc::Rc;
 use syntax::PatternName;
 
 use crate::{Binding, ScopeId, SyntaxNode};
@@ -10,13 +9,15 @@ pub struct Scope<'a> {
     pub node: SyntaxNode<'a>,
     pub children_ids: Vec<ScopeId>,
     pub bindings: HashMap<PatternName, Binding<'a>>,
-    pub resolved_references: HashMap<Rc<String>, (ScopeId, ResolvedReferenceStatus)>,
+    pub resolved_references: HashMap<PatternName, (ScopeId, ResolvedReferenceStatus)>,
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum ResolvedReferenceStatus {
     Ok,
     CheckOverload,
     MaybeInherited,
+    CheckMethodCall,
 }
 
 impl<'a> Scope<'a> {
