@@ -171,7 +171,7 @@ fn resolve_expression(
                 }
             } else {
                 let name = syntax::PatternName::Name(caller.clone());
-                match search_name(&hierarchy, parent_id, &name) {
+                match search_name(hierarchy, parent_id, &name) {
                     Some((scope_id, status)) => {
                         add_resolved_name_to_scope(hierarchy, scope_id, &name, status);
                         Ok(())
@@ -240,12 +240,12 @@ fn resolve_pattern(
                 None => {
                     let span = hierarchy.scopes.get(&parent_id).unwrap().node.span();
 
-                    return Err(ScopeError {
+                    Err(ScopeError {
                         kind: ScopeErrorKind::UnboundSymbol,
                         message: "Symbol does not found",
                         scope_id: parent_id,
                         span,
-                    });
+                    })
                 }
             }
         }

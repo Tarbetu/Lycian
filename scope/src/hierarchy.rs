@@ -103,7 +103,7 @@ impl<'a> Hierarchy<'a> {
                 Scope {
                     id: constructor_id,
                     parent_id: class_scope_id,
-                    node: node.clone(),
+                    node,
                     ..Scope::default()
                 },
             );
