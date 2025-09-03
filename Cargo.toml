@@ -1,4 +1,4 @@
 [workspace]
 
-members = ["syntax", "scanner", "scope"]
+members = ["syntax", "scanner", "scope", "type_hierarchy"]
 resolver = "2"

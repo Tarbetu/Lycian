@@ -3,7 +3,7 @@ use ahash::AHashMap;
 use scanner::Span;
 use std::rc::Rc;
 
-#[derive(Default)]
+#[derive(Default, Debug, PartialEq, Clone)]
 pub struct Class {
     pub name: Rc<String>,
     pub ancestors: Vec<Rc<String>>,

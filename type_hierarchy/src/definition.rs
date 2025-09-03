@@ -1,0 +1,382 @@
+use crate::Hierarchy;
+use scope::ExprId;
+use std::collections::{HashMap, HashSet};
+use std::mem::discriminant;
+use std::rc::Rc;
+use synonym::Synonym;
+
+#[derive(Synonym)]
+pub struct TypeId(pub usize);
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum Constraint {
+    Numeric,
+    Addable,
+    Integer,
+    Floating,
+    Callable,
+    Indexable,
+    Lazy,
+    RespondsTo(syntax::PatternName),
+    SameAs(ExprId),
+    PromisedType(Box<Constraint>),
+}
+
+#[derive(Debug, PartialEq, Copy, Clone)]
+pub enum IntegerNumber {
+    Int8,
+    Int16,
+    Int32,
+    Int64,
+    Int128,
+    IntSize,
+    UInt8,
+    UInt16,
+    UInt32,
+    UInt64,
+    UInt128,
+    UIntSize,
+}
+
+#[derive(Debug, PartialEq, Copy, Clone)]
+pub enum FloatingNumber {
+    Float32,
+    Float64,
+}
+#[derive(Debug, PartialEq, Copy, Clone)]
+
+pub enum PrimitiveType {
+    Integer(IntegerNumber),
+    Floating(FloatingNumber),
+    Boolean,
+    Char,
+    Void,
+}
+
+#[derive(Debug, PartialEq, Copy, Clone)]
+pub enum CompoundType {
+    Array,
+    LinkedList,
+    String,
+}
+
+#[derive(Debug, PartialEq, Copy, Clone)]
+pub enum EmbeddedType {
+    Primitive(PrimitiveType),
+    Compound(CompoundType),
+    Function,
+    Object,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum TypeName {
+    Embedded(EmbeddedType),
+    Custom(Rc<String>),
+}
+
+#[derive(Debug, PartialEq, Copy, Clone)]
+pub enum TypeSize {
+    Exact(usize),
+    UnionSize,
+    PointerSized,
+    Dynamic,
+    ClosureSize,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum TypeDefinition<'a> {
+    Object,
+    Literal {
+        id: TypeId,
+        origin_id: TypeId,
+        size: TypeSize,
+        node: &'a syntax::Literal,
+    },
+    Origin {
+        id: TypeId,
+        name: TypeName,
+        parent_ids: HashMap<usize, Vec<TypeId>>,
+        size: TypeSize,
+        node: Option<&'a syntax::Class>,
+    },
+    Variant {
+        id: TypeId,
+        variant_name: Rc<String>,
+        origin_id: TypeId,
+        node: &'a [syntax::Pattern],
+    },
+    Function {
+        id: TypeId,
+        args: Vec<(TypeId, &'a syntax::Expression)>,
+        origin_id: TypeId,
+        size: TypeSize,
+        node: &'a syntax::Function,
+    },
+    TypeInstance {
+        id: TypeId,
+        origin_id: TypeId,
+        args: Vec<(TypeId, &'a syntax::Expression)>,
+    },
+}
+
+impl<'a> TypeDefinition<'a> {
+    pub fn name(&self) -> TypeName {
+        use TypeDefinition::*;
+
+        match self {
+            Object => TypeName::Embedded(EmbeddedType::Object),
+            Literal { .. } => unimplemented!(),
+            Origin { name, .. } => name.clone(),
+            Variant { .. } => unimplemented!(),
+            Function { .. } => unimplemented!(),
+            TypeInstance { .. } => unimplemented!(),
+        }
+    }
+
+    pub fn id(&self) -> TypeId {
+        use TypeDefinition::*;
+
+        match self {
+            Object => TypeId(0),
+            Literal { id, .. } => *id,
+            Origin { id, .. } => *id,
+            Variant { id, .. } => *id,
+            Function { id, .. } => *id,
+            TypeInstance { id, .. } => *id,
+        }
+    }
+
+    pub fn exact_size(&self) -> usize {
+        match self {
+            TypeDefinition::Origin { size, .. }
+            | TypeDefinition::Literal { size, .. }
+            | TypeDefinition::Function { size, .. } => match size {
+                TypeSize::Exact(s) => *s,
+                TypeSize::PointerSized => 666,
+                _ => panic!("Type does not have an exact size"),
+            },
+            TypeDefinition::Variant { .. } => panic!("Variant type does not have an exact size"),
+            TypeDefinition::Object => panic!("Object type does not have an exact size"),
+            TypeDefinition::TypeInstance { .. } => {
+                panic!("TypeInstance does not have an exact size")
+            }
+        }
+    }
+
+    pub fn origin_id(&self) -> TypeId {
+        match self {
+            TypeDefinition::Origin { id, .. } => *id,
+            TypeDefinition::Literal { origin_id, .. }
+            | TypeDefinition::Variant { origin_id, .. }
+            | TypeDefinition::Function { origin_id, .. }
+            | TypeDefinition::TypeInstance { origin_id, .. } => *origin_id,
+            TypeDefinition::Object => TypeId(0),
+        }
+    }
+
+    pub fn size(&self) -> TypeSize {
+        match self {
+            TypeDefinition::Origin { size, .. }
+            | TypeDefinition::Literal { size, .. }
+            | TypeDefinition::Function { size, .. } => *size,
+            TypeDefinition::Variant { .. } => TypeSize::UnionSize,
+            TypeDefinition::Object => TypeSize::Dynamic,
+            TypeDefinition::TypeInstance { .. } => TypeSize::Dynamic,
+        }
+    }
+
+    pub(crate) fn is_supertype(
+        super_type: &'a Self,
+        sub_type: &'a Self,
+        hierarchy: &'a Hierarchy<'a>,
+    ) -> bool {
+        Self::check_supertype(super_type, sub_type, hierarchy, &mut HashSet::new())
+    }
+
+    fn check_supertype(
+        super_type: &Self,
+        sub_type: &Self,
+        hierarchy: &'a Hierarchy<'a>,
+        visited: &mut HashSet<(TypeId, TypeId)>,
+    ) -> bool {
+        if visited.contains(&(super_type.id(), sub_type.id())) {
+            return false;
+        }
+
+        if super_type.id() == sub_type.id() {
+            return true;
+        }
+
+        if sub_type.is_object() {
+            return false;
+        }
+
+        if super_type.is_object() {
+            return true;
+        }
+
+        if (super_type.is_signed_number() || sub_type.is_unsigned_number())
+            && (super_type.exact_size() > sub_type.exact_size())
+            && sub_type.size() != TypeSize::PointerSized
+        {
+            return true;
+        }
+
+        if sub_type.is_float32() && super_type.is_float64() {
+            return true;
+        }
+
+        if sub_type.is_float64() && super_type.is_floating() {
+            return false;
+        }
+
+        if let (
+            TypeDefinition::Origin {
+                id: super_type_id, ..
+            },
+            TypeDefinition::Origin { parent_ids, .. },
+        ) = (super_type, sub_type)
+            && parent_ids
+                .values()
+                .any(|value| value.contains(super_type_id))
+        {
+            return true;
+        }
+
+        if let (
+            TypeDefinition::Origin {
+                id: super_type_id, ..
+            },
+            TypeDefinition::Variant { origin_id, .. }
+            | TypeDefinition::Literal { origin_id, .. }
+            | TypeDefinition::TypeInstance { origin_id, .. },
+        ) = (super_type, sub_type)
+        {
+            if origin_id == super_type_id {
+                return true;
+            }
+
+            let origin_type = hierarchy.types.get(origin_id).unwrap();
+
+            return Self::check_supertype(super_type, origin_type, hierarchy, visited);
+        }
+
+        // Parametric contravarience
+        if let (
+            TypeDefinition::TypeInstance {
+                origin_id: super_origin_id,
+                args: super_args,
+                ..
+            }
+            | TypeDefinition::Function {
+                origin_id: super_origin_id,
+                args: super_args,
+                ..
+            },
+            TypeDefinition::TypeInstance {
+                origin_id: sub_origin_id,
+                args: sub_args,
+                ..
+            }
+            | TypeDefinition::Function {
+                origin_id: sub_origin_id,
+                args: sub_args,
+                ..
+            },
+        ) = (super_type, sub_type)
+            && discriminant(super_type) == discriminant(sub_type)
+            && super_origin_id == sub_origin_id
+            && (super_args.starts_with(sub_args)
+                || (super_args.len() >= sub_args.len()
+                    && super_args.iter().zip(sub_args.iter()).all(
+                        |((super_type_id, _super_arg), (sub_type_id, _sub_arg))| {
+                            visited.insert((*super_type_id, *sub_type_id));
+                            let super_type = hierarchy.types.get(super_type_id).unwrap();
+                            let sub_type = hierarchy.types.get(sub_type_id).unwrap();
+                            let result =
+                                Self::check_supertype(super_type, sub_type, hierarchy, visited);
+                            visited.remove(&(*super_type_id, *sub_type_id));
+                            result
+                        },
+                    )))
+        {
+            return true;
+        }
+
+        false
+    }
+
+    fn is_object(&self) -> bool {
+        matches!(self, TypeDefinition::Object)
+    }
+
+    fn is_float32(&self) -> bool {
+        matches!(
+            self,
+            TypeDefinition::Origin {
+                name: TypeName::Embedded(EmbeddedType::Primitive(PrimitiveType::Floating(
+                    FloatingNumber::Float32
+                ))),
+                ..
+            }
+        )
+    }
+
+    fn is_float64(&self) -> bool {
+        matches!(
+            self,
+            TypeDefinition::Origin {
+                name: TypeName::Embedded(EmbeddedType::Primitive(PrimitiveType::Floating(
+                    FloatingNumber::Float64
+                ))),
+                ..
+            }
+        )
+    }
+
+    fn is_floating(&self) -> bool {
+        matches!(
+            self,
+            TypeDefinition::Origin {
+                name: TypeName::Embedded(EmbeddedType::Primitive(PrimitiveType::Floating(
+                    FloatingNumber::Float32 | FloatingNumber::Float64
+                ))),
+                ..
+            }
+        )
+    }
+
+    fn is_signed_number(&self) -> bool {
+        matches!(
+            self,
+            TypeDefinition::Origin {
+                name: TypeName::Embedded(EmbeddedType::Primitive(PrimitiveType::Integer(
+                    IntegerNumber::Int8
+                        | IntegerNumber::Int16
+                        | IntegerNumber::Int32
+                        | IntegerNumber::Int64
+                        | IntegerNumber::Int128
+                        | IntegerNumber::IntSize
+                ))),
+                ..
+            }
+        )
+    }
+
+    fn is_unsigned_number(&self) -> bool {
+        matches!(
+            self,
+            TypeDefinition::Origin {
+                name: TypeName::Embedded(EmbeddedType::Primitive(PrimitiveType::Integer(
+                    IntegerNumber::UInt8
+                        | IntegerNumber::UInt16
+                        | IntegerNumber::UInt32
+                        | IntegerNumber::UInt64
+                        | IntegerNumber::UInt128
+                        | IntegerNumber::UIntSize
+                ))),
+                ..
+            }
+        )
+    }
+}
