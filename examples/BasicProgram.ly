@@ -1,33 +1,33 @@
-# A module is akin to classes in other languages. Can be used as namespaces
-module Program:
-	# Function declaration
-	add_two(a: Integer) -> Integer = a + 2
+# A class is a essansial part of Lycian. They can be inherited, can
+# Modules does not need any keyword since they are at top-level
+Program:
+	# Method declaration.
+    # Like modules, they need not any keywords and they have to defined lower-level of modules
+	add_two(a: Int32) -> Integer = a + 2
 
-	# Function overloading!
-	add_two(a: Float) -> Float = a + 0.2
-
-	# Pattern matching!
-	add_two(42) = 42
-
-	# Function without type annonations
-	give_five = 5
+	# Method can be overloadable.
+    # Can be more spesific to a type, like a literal type, or can be more general like a superclass.
+    # However, they have to be in a similar ancestorship line.
+	add_two(42) = 44
 
 	# Literals can be used as types, the literal types can be used as compile time values
-	# Well, you don't need to specify them
-	give_the_answer -> 42 = 42
+    # And you can escape the parantheses if you don't need parameters.
+	give_the_answer -> 42 = add_two(40)
 
 	# All functions need to declare `main` function
 	# Main need to take an program state, and this is implictly given by the compiler
 	# Also, states are implicitly declared. They are "Running" and "Exit".
 	# Users can declare their states to define program rules.
 	main(Program) =
-		# Nested functions are allowed and defined in function scope
-		# Also, you can call functions without paranthesis
-		output -> IO = IO.print give_the_answer
+		# Functions are allowed and defined in methods, and they can be nested
+        # Unlike method, you don't have to give a return type for them
+		output = IO.print(give_the_answer)
 
-		IO is a monad, which can matched
+        # Below is just a concept, but might to note down here
+		# IO is a ADT, which can matched
+        # However, you can wait the IO with strict call like `IO.print!(give_the_answer)`
 		match output:
-			# You can easily call monads if you need trigger them
+			# You can easily call ADTs if you need trigger them
 			IO.ready 	-> output()
 			# Recursively calls main until IO is released.
 			# This don't blow the stack because of tail call
