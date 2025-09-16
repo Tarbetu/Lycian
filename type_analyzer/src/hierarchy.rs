@@ -22,7 +22,7 @@ pub struct Hierarchy<'a> {
 #[derive(Default)]
 pub struct ExprToTypeTable {
     ok: HashMap<ExprId, TypeId>,
-    err: HashMap<ExprId, TypeError>, // String will be considered as error
+    err: HashMap<ExprId, TypeError>,
     deferred: Vec<ExprId>,
 }
 
