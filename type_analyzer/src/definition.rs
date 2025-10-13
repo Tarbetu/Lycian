@@ -8,7 +8,7 @@ use synonym::Synonym;
 #[derive(Synonym)]
 pub struct TypeId(pub usize);
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub enum Constraint {
     Numeric,
     Addable,
@@ -16,10 +16,11 @@ pub enum Constraint {
     Floating,
     Callable,
     Indexable,
-    Lazy,
+    ReturnedFrom(ExprId),
     RespondsTo(syntax::PatternName),
     SameAs(ExprId),
-    PromisedType(Box<Constraint>),
+    Inheritance(Rc<Vec<TypeId>>),
+    TypeRef,
 }
 
 #[derive(Debug, PartialEq, Copy, Clone)]
@@ -81,6 +82,7 @@ pub enum TypeSize {
     PointerSized,
     Dynamic,
     ClosureSize,
+    OriginSize,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -89,7 +91,6 @@ pub enum TypeDefinition<'a> {
     Literal {
         id: TypeId,
         origin_id: TypeId,
-        size: TypeSize,
         node: &'a syntax::Literal,
     },
     Origin {
@@ -148,13 +149,16 @@ impl<'a> TypeDefinition<'a> {
 
     pub fn exact_size(&self) -> usize {
         match self {
-            TypeDefinition::Origin { size, .. }
-            | TypeDefinition::Literal { size, .. }
-            | TypeDefinition::Function { size, .. } => match size {
-                TypeSize::Exact(s) => *s,
-                TypeSize::PointerSized => 666,
-                _ => panic!("Type does not have an exact size"),
-            },
+            TypeDefinition::Origin { size, .. } | TypeDefinition::Function { size, .. } => {
+                match size {
+                    TypeSize::Exact(s) => *s,
+                    TypeSize::PointerSized => 666,
+                    _ => panic!("Type does not have an exact size"),
+                }
+            }
+            TypeDefinition::Literal { .. } => {
+                panic!("Literal type does not have an exact size")
+            }
             TypeDefinition::Variant { .. } => panic!("Variant type does not have an exact size"),
             TypeDefinition::Object => panic!("Object type does not have an exact size"),
             TypeDefinition::TypeInstance { .. } => {
@@ -176,9 +180,8 @@ impl<'a> TypeDefinition<'a> {
 
     pub fn size(&self) -> TypeSize {
         match self {
-            TypeDefinition::Origin { size, .. }
-            | TypeDefinition::Literal { size, .. }
-            | TypeDefinition::Function { size, .. } => *size,
+            TypeDefinition::Origin { size, .. } | TypeDefinition::Function { size, .. } => *size,
+            TypeDefinition::Literal { .. } => TypeSize::OriginSize,
             TypeDefinition::Variant { .. } => TypeSize::UnionSize,
             TypeDefinition::Object => TypeSize::Dynamic,
             TypeDefinition::TypeInstance { .. } => TypeSize::Dynamic,

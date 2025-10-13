@@ -23,7 +23,7 @@ pub use operator::Operator;
 use scanner::{Span, Token, TokenType};
 
 use ahash::AHashMap;
-pub use scopeguard::guard;
+use scopeguard::guard;
 use std::mem::swap;
 use std::rc::Rc;
 

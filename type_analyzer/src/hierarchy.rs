@@ -2,18 +2,18 @@ mod embedded_types;
 
 use crate::definition::*;
 use crate::error::TypeError;
-use embedded_types::*;
+pub use embedded_types::*;
 use scope::ExprId;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 pub struct Hierarchy<'a> {
     pub types: HashMap<TypeId, TypeDefinition<'a>>,
     last_id: TypeId,
     pub name_to_origin_id: HashMap<Rc<String>, TypeId>,
-    pub variants_of_origin: HashMap<TypeId, Vec<TypeId>>,
+    pub variants_of_origin: HashMap<TypeId, HashMap<Rc<String>, TypeId>>,
     pub expr_to_type: ExprToTypeTable,
-    pub expr_constraints: HashMap<TypeId, Constraint>,
+    pub expr_constraints: HashMap<scope::ExprId, HashSet<Constraint>>,
     pub embedded_types: &'static EmbeddedTypes,
     pub type_instances: HashMap<TypeId, Vec<TypeId>>,
     pub scope_hierarchy: scope::Hierarchy<'a>,
@@ -21,16 +21,16 @@ pub struct Hierarchy<'a> {
 
 #[derive(Default)]
 pub struct ExprToTypeTable {
-    ok: HashMap<ExprId, TypeId>,
-    err: HashMap<ExprId, TypeError>,
-    deferred: Vec<ExprId>,
+    pub ok: HashMap<ExprId, TypeId>,
+    pub err: HashMap<ExprId, TypeError>,
+    pub deferred: HashSet<ExprId>,
 }
 
 impl<'a> Hierarchy<'a> {
     pub(crate) fn new(scope_hierarchy: scope::Hierarchy<'a>) -> Self {
         Self {
             types: HashMap::new(),
-            last_id: TypeId(22),
+            last_id: TypeId(24),
             name_to_origin_id: HashMap::new(),
             variants_of_origin: HashMap::new(),
             expr_to_type: ExprToTypeTable::default(),
@@ -41,6 +41,12 @@ impl<'a> Hierarchy<'a> {
         }
         .install_embedded_types()
         .install_custom_types()
+    }
+
+    pub(crate) fn next_id(&mut self) -> TypeId {
+        let result = self.last_id;
+        self.last_id = TypeId(self.last_id.0 + 1);
+        result
     }
 
     fn install_embedded_types(mut self) -> Self {
@@ -284,6 +290,26 @@ impl<'a> Hierarchy<'a> {
                     node: None,
                 },
             ),
+            (
+                EMBEDDED_TYPES.literal_integer,
+                TypeDefinition::Origin {
+                    id: EMBEDDED_TYPES.literal_integer,
+                    name: TypeName::Embedded(EmbeddedType::Function),
+                    parent_ids: HashMap::new(),
+                    size: TypeSize::Exact(4),
+                    node: None,
+                },
+            ),
+            (
+                EMBEDDED_TYPES.literal_integer,
+                TypeDefinition::Origin {
+                    id: EMBEDDED_TYPES.literal_float,
+                    name: TypeName::Embedded(EmbeddedType::Function),
+                    parent_ids: HashMap::new(),
+                    size: TypeSize::Exact(8),
+                    node: None,
+                },
+            ),
         ]);
 
         self
@@ -313,9 +339,12 @@ impl<'a> Hierarchy<'a> {
                 },
             );
 
+            let mut variants = HashMap::new();
             for (constructor_name, patterns) in class.constructors.iter() {
                 let variant_id = self.last_id;
                 self.last_id.0 += 1;
+
+                variants.insert(constructor_name.clone(), variant_id);
 
                 self.types.insert(
                     variant_id,
@@ -327,6 +356,8 @@ impl<'a> Hierarchy<'a> {
                     },
                 );
             }
+
+            self.variants_of_origin.insert(class_type_id, variants);
         }
 
         self

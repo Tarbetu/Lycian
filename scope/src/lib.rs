@@ -8,13 +8,13 @@ use synonym::Synonym;
 
 use std::rc::Rc;
 
-pub use binding::Binding;
+pub use binding::{Binding, BindingKind};
 pub use error::ScopeResult;
 pub use hierarchy::Hierarchy;
 pub use scope::Scope;
 
 #[derive(Synonym)]
-pub struct ExprId(usize);
+pub struct ExprId(pub usize);
 
 #[derive(Synonym)]
 pub struct ScopeId(usize);
@@ -31,7 +31,7 @@ pub enum SyntaxNode<'a> {
     // Only used for bindings
     Method(&'a [syntax::Function]),
     Expression(&'a syntax::Expression),
-    Constructor(&'a (Rc<String>, Vec<syntax::Pattern>)),
+    Constructor(&'a syntax::Class, &'a (Rc<String>, Vec<syntax::Pattern>)),
     Pattern(&'a syntax::Pattern),
 }
 
@@ -43,8 +43,15 @@ impl<'a> SyntaxNode<'a> {
             SyntaxNode::Function(function) => function.span.clone(),
             SyntaxNode::Method(functions) => functions[0].span.clone(),
             SyntaxNode::Expression(expr) => expr.span.clone(),
-            SyntaxNode::Constructor((_, patterns)) => patterns[0].value.span.clone(),
+            SyntaxNode::Constructor(_, (_, patterns)) => patterns[0].value.span.clone(),
             SyntaxNode::Pattern(pattern) => pattern.value.span.clone(),
+        }
+    }
+
+    pub fn return_type_expr(&self) -> Option<&syntax::Expression> {
+        match self {
+            SyntaxNode::Function(function) => function.return_type.as_ref(),
+            _ => panic!("Not a function node"),
         }
     }
 }

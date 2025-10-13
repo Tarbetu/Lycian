@@ -29,7 +29,9 @@ fn resolve_class(hierarchy: &mut Hierarchy, scope_id: ScopeId) -> ScopeResult<()
 
         match declaration_scope.node {
             SyntaxNode::Function(_) => resolve_function(hierarchy, scope_id, declaration_id)?,
-            SyntaxNode::Constructor(_) => resolve_constructor(hierarchy, scope_id, declaration_id)?,
+            SyntaxNode::Constructor(_, _) => {
+                resolve_constructor(hierarchy, scope_id, declaration_id)?
+            }
             _ => unreachable!(),
         }
     }
@@ -49,7 +51,7 @@ fn resolve_constructor(
         .children_ids
         .push(declaration_id);
 
-    let SyntaxNode::Constructor((_, patterns)) =
+    let SyntaxNode::Constructor(_, (_, patterns)) =
         hierarchy.scopes.get(&declaration_id).unwrap().node
     else {
         panic!("Expected constructor in constructor")

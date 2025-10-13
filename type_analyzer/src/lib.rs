@@ -1,3 +1,4 @@
+mod constraint_detective;
 mod definition;
 mod error;
 mod hierarchy;

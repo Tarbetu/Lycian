@@ -15,3 +15,13 @@ pub enum PatternName {
     Super,
     NoName,
 }
+
+impl From<&Rc<String>> for PatternName {
+    fn from(name: &Rc<String>) -> Self {
+        match name.as_str() {
+            "self" => PatternName::ClassSelf,
+            "super" => PatternName::Super,
+            _ => PatternName::Name(name.clone()),
+        }
+    }
+}
