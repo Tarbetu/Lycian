@@ -20,6 +20,7 @@ impl<'a> Binding<'a> {
     }
 }
 
+#[derive(PartialEq, Debug, Copy, Clone)]
 pub enum BindingKind {
     Class,
     Constructor,

@@ -1,4 +1,4 @@
-use crate::binding::{Binding, BindingKind};
+use crate::binding::BindingKind;
 use crate::error::{ScopeError, ScopeErrorKind};
 use crate::hierarchy::ROOT_ID;
 use crate::scope::ResolvedReferenceStatus;
@@ -267,11 +267,13 @@ fn search_name(
 
     loop {
         match current_scope.bindings.get(name) {
-            Some(Binding {
-                kind: BindingKind::Method,
-                ..
-            }) => return Some((current_scope.id, ResolvedReferenceStatus::CheckOverload)),
-            Some(_) => return Some((current_scope.id, ResolvedReferenceStatus::Ok)),
+            Some(binding_id) => {
+                return if hierarchy.bindings.get(binding_id).unwrap().kind == BindingKind::Method {
+                    Some((current_scope.id, ResolvedReferenceStatus::CheckOverload))
+                } else {
+                    Some((current_scope.id, ResolvedReferenceStatus::Ok))
+                }
+            }
             None => match hierarchy.scopes.get(&current_scope.parent_id) {
                 Some(
                     scope @ Scope {
@@ -319,18 +321,21 @@ fn extract_type_from_call(
 
 fn add_resolved_name_to_scope(
     hierarchy: &mut Hierarchy<'_>,
-    scope: ScopeId,
+    scope_id: ScopeId,
     name: &syntax::PatternName,
     status: ResolvedReferenceStatus,
 ) {
-    let scope = hierarchy.scopes.get_mut(&scope).unwrap();
+    let scope = hierarchy.scopes.get_mut(&scope_id).unwrap();
+
     if scope.resolved_references.contains_key(name) {
         return;
     }
 
+    let binding_id = *scope.bindings.get(name).unwrap();
+
     scope
         .resolved_references
-        .insert(name.clone(), (scope.id, status));
+        .insert(name.clone(), (binding_id, status));
 
     use ResolvedReferenceStatus::*;
     match status {

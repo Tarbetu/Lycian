@@ -1,5 +1,4 @@
 use crate::Hierarchy;
-use scope::ExprId;
 use std::collections::{HashMap, HashSet};
 use std::mem::discriminant;
 use std::rc::Rc;
@@ -16,9 +15,9 @@ pub enum Constraint {
     Floating,
     Callable,
     Indexable,
-    ReturnedFrom(ExprId),
+    ResultOf(scope::BindingId),
     RespondsTo(syntax::PatternName),
-    SameAs(ExprId),
+    SameAs(scope::ExprId),
     Inheritance(Rc<Vec<TypeId>>),
     TypeRef,
 }
