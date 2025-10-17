@@ -17,8 +17,9 @@ pub enum Constraint {
     Indexable,
     ResultOf(scope::BindingId),
     RespondsTo(syntax::PatternName),
+    SuperCall(syntax::PatternName),
     SameAs(scope::ExprId),
-    Inheritance(Rc<Vec<TypeId>>),
+    AnyOfTypeRefs(Rc<Vec<scope::ExprId>>),
     TypeRef,
 }
 
