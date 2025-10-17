@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::mem::discriminant;
 use std::rc::Rc;
 use synonym::Synonym;
+use std::fmt::Display;
 
 #[derive(Synonym)]
 pub struct TypeId(pub usize);
@@ -15,6 +16,7 @@ pub enum Constraint {
     Floating,
     Callable,
     Indexable,
+    AcceptsBlock,
     ResultOf(scope::BindingId),
     RespondsTo(syntax::PatternName),
     SuperCall(syntax::PatternName),

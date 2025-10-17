@@ -281,6 +281,10 @@ impl<'a> ConstraintDetective<'a> {
                 },
                 _,
             ) => {
+                if let Some(promised_type_id) = promised_type_id {
+                    self.declare_expr_type(value.id, promised_type_id);
+                }
+
                 self.investigate_expression(value)?;
 
                 for expression in expressions {
@@ -298,6 +302,12 @@ impl<'a> ConstraintDetective<'a> {
                 },
                 _,
             ) => {
+                if let Some(promised_type_id) = promised_type_id {
+                    self.declare_expr_type(expr.id, promised_type_id);
+                } else {
+                    self.declare_expr_constraints(expr.id, &[Constraint::AcceptsBlock]);
+                }
+
                 if let Some(block) = block {
                     self.investigate_expression(block)?;
                 }
@@ -339,12 +349,26 @@ impl<'a> ConstraintDetective<'a> {
                             .copied()
                             .unwrap();
 
-                        self.hierarchy
-                            .expr_to_type
-                            .ok
-                            .insert(scope::ExprId(expr.id), origin_id);
+                        if let Some(promised_type_id) = promised_type_id {
+                            if origin_id == promised_type_id {
+                                Ok(())
+                            } else {
+                                Err(TypeError {
+                                    kind: TypeErrorKind::TypeMismatch,
+                                    message:
+                                        "Class instantiation type does not match with promised type",
+                                    type_id: promised_type_id,
+                                    span: expr.span.clone(),
+                                })
+                            }
+                        } else {
+                            self.hierarchy
+                                .expr_to_type
+                                .ok
+                                .insert(scope::ExprId(expr.id), origin_id);
 
-                        Ok(())
+                            Ok(())
+                        }
                     }
                     Constructor => {
                         let scope::SyntaxNode::Constructor(class, constructor) = binding_node
@@ -368,12 +392,21 @@ impl<'a> ConstraintDetective<'a> {
                             .copied()
                             .unwrap();
 
-                        self.hierarchy
-                            .expr_to_type
-                            .ok
-                            .insert(scope::ExprId(expr.id), variant_id);
+                        if let Some(promised_type_id) = promised_type_id {
+                            self.typecheck_with_promised_type(
+                                promised_type_id,
+                                variant_id,
+                                "Variant type does not match with promised type",
+                                &expr.span,
+                            )
+                        } else {
+                            self.hierarchy
+                                .expr_to_type
+                                .ok
+                                .insert(scope::ExprId(expr.id), variant_id);
 
-                        Ok(())
+                            Ok(())
+                        }
                     }
                     Method | LocalFunction => {
                         self.declare_expr_constraints(
@@ -524,7 +557,7 @@ impl<'a> ConstraintDetective<'a> {
                         // The self could be memorized for the method scope, in a way.
                         let mut current_scope_id = scope_id;
 
-                        loop {
+                        let self_type_id = loop {
                             let scope = self
                                 .hierarchy
                                 .scope_hierarchy
@@ -555,9 +588,9 @@ impl<'a> ConstraintDetective<'a> {
                                             .copied()
                                             .unwrap();
 
-                                        self.declare_expr_type(expr.id, variant_id);
+                                        // self.declare_expr_type(expr.id, variant_id);
 
-                                        return Ok(());
+                                        break variant_id;
                                     } else {
                                         return Err(TypeError {
                                             kind: TypeErrorKind::InvalidSelf,
@@ -571,6 +604,13 @@ impl<'a> ConstraintDetective<'a> {
                                     current_scope_id = scope.parent_id;
                                 }
                             }
+                        };
+
+                        if let Some(promised_type_id) = promised_type_id {
+                            self.typecheck_with_promised_type(promised_type_id, self_type_id, "Promised type is not the match with the self binding", &expr.span)
+                        } else {
+                            self.declare_expr_type(expr.id, self_type_id);
+                            Ok(())
                         }
                     }
                     _ => Err(TypeError {
@@ -783,6 +823,37 @@ impl<'a> ConstraintDetective<'a> {
                 origin_id: EMBEDDED_TYPES.array,
                 node: literal,
             },
+        }
+    }
+
+    fn typecheck_with_promised_type(
+        &self,
+        promised_type_id: TypeId,
+        found_type_id: TypeId,
+        message: &'static str,
+        span: &scanner::Span,
+    ) -> TypeResult<()> {
+        let promised_type = self
+            .hierarchy
+            .types
+            .get(&promised_type_id)
+            .expect("Promised type not found");
+
+        let found_type = self
+            .hierarchy
+            .types
+            .get(&found_type_id)
+            .expect("Found type not found");
+
+        if TypeDefinition::is_supertype(promised_type, found_type, &self.hierarchy) {
+            Ok(())
+        } else {
+            Err(TypeError {
+                kind: TypeErrorKind::TypeMismatch,
+                message,
+                type_id: promised_type_id,
+                span: span.clone(),
+            })
         }
     }
 
