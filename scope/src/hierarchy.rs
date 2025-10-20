@@ -14,6 +14,8 @@ pub struct Hierarchy<'a> {
     pub bindings: HashMap<BindingId, Binding<'a>>,
     pub expr_to_scope_id: HashMap<ExprId, ScopeId>,
     pub delayed_scopes: DelayedScopes,
+    pub class_to_binding_id: HashMap<Rc<String>, BindingId>,
+    pub class_to_scope_id: HashMap<Rc<String>, ScopeId>,
 }
 
 #[derive(Default)]
@@ -33,6 +35,8 @@ impl Default for Hierarchy<'_> {
             bindings: HashMap::new(),
             expr_to_scope_id: HashMap::new(),
             delayed_scopes: DelayedScopes::default(),
+            class_to_binding_id: HashMap::new(),
+            class_to_scope_id: HashMap::new(),
         }
     }
 }
@@ -81,6 +85,12 @@ impl<'a> Hierarchy<'a> {
 
             self.build_constructors(class, &class.constructors, class_scope_id)?;
             self.build_methods(&class.methods, class_scope_id)?;
+
+            self.class_to_binding_id
+                .insert(class.name.clone(), binding_id);
+
+            self.class_to_scope_id
+                .insert(class.name.clone(), class_scope_id);
         }
 
         self.scopes.insert(ROOT_ID, root);

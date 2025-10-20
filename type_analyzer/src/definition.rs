@@ -3,7 +3,6 @@ use std::collections::{HashMap, HashSet};
 use std::mem::discriminant;
 use std::rc::Rc;
 use synonym::Synonym;
-use std::fmt::Display;
 
 #[derive(Synonym)]
 pub struct TypeId(pub usize);
@@ -101,12 +100,15 @@ pub enum TypeDefinition<'a> {
         parent_ids: HashMap<usize, Vec<TypeId>>,
         size: TypeSize,
         node: Option<&'a syntax::Class>,
+        constructors: Vec<scope::BindingId>,
+        static_methods: Vec<scope::BindingId>,
     },
     Variant {
         id: TypeId,
         variant_name: Rc<String>,
         origin_id: TypeId,
         node: &'a [syntax::Pattern],
+        instance_methods: Vec<scope::BindingId>
     },
     Function {
         id: TypeId,

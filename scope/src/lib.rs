@@ -22,7 +22,7 @@ pub struct ScopeId(usize);
 #[derive(Synonym)]
 pub struct BindingId(usize);
 
-#[derive(Copy, Clone)]
+#[derive(Debug, PartialEq, Copy, Clone)]
 pub enum SyntaxNode<'a> {
     Root,
     Class(&'a syntax::Class),

@@ -13,10 +13,13 @@ pub struct Hierarchy<'a> {
     pub name_to_origin_id: HashMap<Rc<String>, TypeId>,
     pub variants_of_origin: HashMap<TypeId, HashMap<Rc<String>, TypeId>>,
     pub expr_to_type: ExprToTypeTable,
+    pub binding_to_type: HashMap<scope::BindingId, TypeId>,
     pub expr_constraints: HashMap<scope::ExprId, HashSet<Constraint>>,
     pub embedded_types: &'static EmbeddedTypes,
     pub type_instances: HashMap<TypeId, Vec<TypeId>>,
     pub scope_hierarchy: scope::Hierarchy<'a>,
+    pub responds_to_table: HashMap<Rc<String>, TypeId>,
+    pub call_table: HashMap<scope::ExprId, (scope::BindingId, TypeId)>,
 }
 
 #[derive(Default)]
@@ -38,6 +41,9 @@ impl<'a> Hierarchy<'a> {
             embedded_types: &EMBEDDED_TYPES,
             type_instances: HashMap::new(),
             scope_hierarchy,
+            responds_to_table: HashMap::new(),
+            binding_to_type: HashMap::new(),
+            call_table: HashMap::new(),
         }
         .install_embedded_types()
         .install_custom_types()
@@ -62,6 +68,8 @@ impl<'a> Hierarchy<'a> {
                     parent_ids: HashMap::new(),
                     size: TypeSize::Exact(1),
                     node: None,
+                    constructors: vec![],
+                    static_methods: vec![],
                 },
             ),
             (
@@ -74,6 +82,8 @@ impl<'a> Hierarchy<'a> {
                     parent_ids: HashMap::new(),
                     size: TypeSize::Exact(2),
                     node: None,
+                    constructors: vec![],
+                    static_methods: vec![],
                 },
             ),
             (
@@ -86,6 +96,8 @@ impl<'a> Hierarchy<'a> {
                     parent_ids: HashMap::new(),
                     size: TypeSize::Exact(4),
                     node: None,
+                    constructors: vec![],
+                    static_methods: vec![],
                 },
             ),
             (
@@ -98,6 +110,8 @@ impl<'a> Hierarchy<'a> {
                     parent_ids: HashMap::new(),
                     size: TypeSize::Exact(8),
                     node: None,
+                    constructors: vec![],
+                    static_methods: vec![],
                 },
             ),
             (
@@ -110,6 +124,8 @@ impl<'a> Hierarchy<'a> {
                     parent_ids: HashMap::new(),
                     size: TypeSize::Exact(16),
                     node: None,
+                    constructors: vec![],
+                    static_methods: vec![],
                 },
             ),
             (
@@ -122,6 +138,8 @@ impl<'a> Hierarchy<'a> {
                     parent_ids: HashMap::new(),
                     size: TypeSize::PointerSized,
                     node: None,
+                    constructors: vec![],
+                    static_methods: vec![],
                 },
             ),
             (
@@ -134,6 +152,8 @@ impl<'a> Hierarchy<'a> {
                     parent_ids: HashMap::new(),
                     size: TypeSize::Exact(1),
                     node: None,
+                    constructors: vec![],
+                    static_methods: vec![],
                 },
             ),
             (
@@ -146,6 +166,8 @@ impl<'a> Hierarchy<'a> {
                     parent_ids: HashMap::new(),
                     size: TypeSize::Exact(2),
                     node: None,
+                    constructors: vec![],
+                    static_methods: vec![],
                 },
             ),
             (
@@ -158,6 +180,8 @@ impl<'a> Hierarchy<'a> {
                     parent_ids: HashMap::new(),
                     size: TypeSize::Exact(4),
                     node: None,
+                    constructors: vec![],
+                    static_methods: vec![],
                 },
             ),
             (
@@ -170,6 +194,8 @@ impl<'a> Hierarchy<'a> {
                     parent_ids: HashMap::new(),
                     size: TypeSize::Exact(8),
                     node: None,
+                    constructors: vec![],
+                    static_methods: vec![],
                 },
             ),
             (
@@ -182,6 +208,8 @@ impl<'a> Hierarchy<'a> {
                     parent_ids: HashMap::new(),
                     size: TypeSize::Exact(16),
                     node: None,
+                    constructors: vec![],
+                    static_methods: vec![],
                 },
             ),
             (
@@ -194,6 +222,8 @@ impl<'a> Hierarchy<'a> {
                     parent_ids: HashMap::new(),
                     size: TypeSize::PointerSized,
                     node: None,
+                    constructors: vec![],
+                    static_methods: vec![],
                 },
             ),
             (
@@ -206,6 +236,8 @@ impl<'a> Hierarchy<'a> {
                     parent_ids: HashMap::new(),
                     size: TypeSize::Exact(4),
                     node: None,
+                    constructors: vec![],
+                    static_methods: vec![],
                 },
             ),
             (
@@ -218,6 +250,8 @@ impl<'a> Hierarchy<'a> {
                     parent_ids: HashMap::new(),
                     size: TypeSize::Exact(8),
                     node: None,
+                    constructors: vec![],
+                    static_methods: vec![],
                 },
             ),
             (
@@ -228,6 +262,8 @@ impl<'a> Hierarchy<'a> {
                     parent_ids: HashMap::new(),
                     size: TypeSize::Exact(1),
                     node: None,
+                    constructors: vec![],
+                    static_methods: vec![],
                 },
             ),
             (
@@ -238,6 +274,8 @@ impl<'a> Hierarchy<'a> {
                     parent_ids: HashMap::new(),
                     size: TypeSize::Exact(4),
                     node: None,
+                    constructors: vec![],
+                    static_methods: vec![],
                 },
             ),
             (
@@ -248,6 +286,8 @@ impl<'a> Hierarchy<'a> {
                     parent_ids: HashMap::new(),
                     size: TypeSize::Exact(0),
                     node: None,
+                    constructors: vec![],
+                    static_methods: vec![],
                 },
             ),
             (
@@ -258,6 +298,8 @@ impl<'a> Hierarchy<'a> {
                     parent_ids: HashMap::new(),
                     size: TypeSize::PointerSized,
                     node: None,
+                    constructors: vec![],
+                    static_methods: vec![],
                 },
             ),
             (
@@ -268,6 +310,8 @@ impl<'a> Hierarchy<'a> {
                     parent_ids: HashMap::new(),
                     size: TypeSize::PointerSized,
                     node: None,
+                    constructors: vec![],
+                    static_methods: vec![],
                 },
             ),
             (
@@ -278,6 +322,8 @@ impl<'a> Hierarchy<'a> {
                     parent_ids: HashMap::new(),
                     size: TypeSize::PointerSized,
                     node: None,
+                    constructors: vec![],
+                    static_methods: vec![],
                 },
             ),
             (
@@ -288,6 +334,8 @@ impl<'a> Hierarchy<'a> {
                     parent_ids: HashMap::new(),
                     size: TypeSize::ClosureSize,
                     node: None,
+                    constructors: vec![],
+                    static_methods: vec![],
                 },
             ),
             (
@@ -298,6 +346,8 @@ impl<'a> Hierarchy<'a> {
                     parent_ids: HashMap::new(),
                     size: TypeSize::Exact(4),
                     node: None,
+                    constructors: vec![],
+                    static_methods: vec![],
                 },
             ),
             (
@@ -308,6 +358,8 @@ impl<'a> Hierarchy<'a> {
                     parent_ids: HashMap::new(),
                     size: TypeSize::Exact(8),
                     node: None,
+                    constructors: vec![],
+                    static_methods: vec![],
                 },
             ),
         ]);
@@ -317,7 +369,6 @@ impl<'a> Hierarchy<'a> {
 
     fn install_custom_types(mut self) -> Self {
         for (_class_scope_id, class_scope) in self.scope_hierarchy.scopes.iter() {
-            // let class_type_id = self.next_id();
             let class_type_id = self.last_id;
             self.last_id.0 += 1;
 
@@ -328,6 +379,17 @@ impl<'a> Hierarchy<'a> {
             self.name_to_origin_id
                 .insert(class.name.clone(), class_type_id);
 
+            let class_scope_id = self
+                .scope_hierarchy
+                .class_to_scope_id
+                .get(&class.name)
+                .unwrap();
+
+            let class_scope = self.scope_hierarchy.scopes.get(class_scope_id).unwrap();
+
+            let constructors = self.constructor_bindings(class, class_scope);
+            let static_methods = vec![];
+
             self.types.insert(
                 class_type_id,
                 TypeDefinition::Origin {
@@ -336,6 +398,8 @@ impl<'a> Hierarchy<'a> {
                     parent_ids: HashMap::new(), // This will handled by inheritence analysis
                     size: TypeSize::UnionSize,
                     node: Some(class),
+                    constructors,
+                    static_methods,
                 },
             );
 
@@ -346,6 +410,8 @@ impl<'a> Hierarchy<'a> {
 
                 variants.insert(constructor_name.clone(), variant_id);
 
+                let instance_methods = vec![];
+
                 self.types.insert(
                     variant_id,
                     TypeDefinition::Variant {
@@ -353,6 +419,7 @@ impl<'a> Hierarchy<'a> {
                         variant_name: constructor_name.clone(),
                         origin_id: class_type_id,
                         node: patterns,
+                        instance_methods,
                     },
                 );
             }
@@ -362,4 +429,42 @@ impl<'a> Hierarchy<'a> {
 
         self
     }
+
+    fn constructor_bindings(
+        &self,
+        class: &syntax::Class,
+        class_scope: &scope::Scope<'_>,
+    ) -> Vec<scope::BindingId> {
+        class
+            .constructors
+            .iter()
+            .map(|(constructor_name, _patterns)| {
+                let (_name, binding_id) = class_scope
+                    .bindings
+                    .iter()
+                    .find(|(binding_name, _binding_id)| {
+                        binding_name.as_ref() == constructor_name.as_ref()
+                    })
+                    .unwrap();
+
+                *binding_id
+            })
+            .collect()
+    }
+
+    // fn static_methods(&self, class_scope: &syntax::Class) -> Vec<scope::BindingId> {
+    //     let class_scope_id = self
+    //         .scope_hierarchy
+    //         .class_to_scope_id
+    //         .get(&class.name)
+    //         .unwrap();
+
+    //     let class_scope = self.scope_hierarchy.scopes.get(class_scope_id).unwrap();
+
+    //     class_scope
+    //         .bindings
+    //         .iter()
+    //         .map(|(_pattern_name, constructor_binding_id)| *constructor_binding_id)
+    //         .collect()
+    // }
 }

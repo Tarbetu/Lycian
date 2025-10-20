@@ -1,5 +1,6 @@
 use crate::{BindingId, ScopeId, SyntaxNode};
 
+#[derive(PartialEq, Debug, Clone)]
 pub struct Binding<'a> {
     pub id: BindingId,
     pub node: SyntaxNode<'a>,
