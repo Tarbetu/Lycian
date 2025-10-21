@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::mem::discriminant;
 use std::rc::Rc;
 use synonym::Synonym;
+use std::fmt::Display;
 
 #[derive(Synonym)]
 pub struct TypeId(pub usize);
@@ -63,17 +64,22 @@ pub enum CompoundType {
 }
 
 #[derive(Debug, PartialEq, Copy, Clone)]
-pub enum EmbeddedType {
+pub enum EmbeddedTypeName {
     Primitive(PrimitiveType),
     Compound(CompoundType),
     Function,
     Object,
 }
 
-#[derive(Debug, PartialEq, Clone)]
-pub enum TypeName {
-    Embedded(EmbeddedType),
-    Custom(Rc<String>),
+impl Display for EmbeddedTypeName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EmbeddedTypeName::Primitive(p) => write!(f, "{:?}", p),
+            EmbeddedTypeName::Compound(c) => write!(f, "{:?}", c),
+            EmbeddedTypeName::Function => write!(f, "Function"),
+            EmbeddedTypeName::Object => write!(f, "Object"),
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Copy, Clone)]
@@ -94,9 +100,15 @@ pub enum TypeDefinition<'a> {
         origin_id: TypeId,
         node: &'a syntax::Literal,
     },
+    EmbeddedType {
+        id: TypeId,
+        name: EmbeddedTypeName,
+        size: TypeSize
+    },
     Origin {
         id: TypeId,
-        name: TypeName,
+        binding_id: scope::BindingId,
+        name: Rc<String>,
         parent_ids: HashMap<usize, Vec<TypeId>>,
         size: TypeSize,
         node: Option<&'a syntax::Class>,
@@ -105,7 +117,8 @@ pub enum TypeDefinition<'a> {
     },
     Variant {
         id: TypeId,
-        variant_name: Rc<String>,
+        binding_id: scope::BindingId,
+        name: Rc<String>,
         origin_id: TypeId,
         node: &'a [syntax::Pattern],
         instance_methods: Vec<scope::BindingId>
@@ -125,11 +138,12 @@ pub enum TypeDefinition<'a> {
 }
 
 impl<'a> TypeDefinition<'a> {
-    pub fn name(&self) -> TypeName {
+    pub fn name(&self) -> Rc<String> {
         use TypeDefinition::*;
 
         match self {
-            Object => TypeName::Embedded(EmbeddedType::Object),
+            Object => Rc::new(String::from("Object")),
+            EmbeddedType { name, .. } => name.to_string().into(),
             Literal { .. } => unimplemented!(),
             Origin { name, .. } => name.clone(),
             Variant { .. } => unimplemented!(),
@@ -144,6 +158,7 @@ impl<'a> TypeDefinition<'a> {
         match self {
             Object => TypeId(0),
             Literal { id, .. } => *id,
+            EmbeddedType { id, .. } => *id,
             Origin { id, .. } => *id,
             Variant { id, .. } => *id,
             Function { id, .. } => *id,
@@ -152,43 +167,49 @@ impl<'a> TypeDefinition<'a> {
     }
 
     pub fn exact_size(&self) -> usize {
+                use TypeDefinition::*;
+
         match self {
-            TypeDefinition::Origin { size, .. } | TypeDefinition::Function { size, .. } => {
+            Origin { size, .. } | Function { size, .. } | EmbeddedType { size, .. } => {
                 match size {
                     TypeSize::Exact(s) => *s,
                     TypeSize::PointerSized => 666,
                     _ => panic!("Type does not have an exact size"),
                 }
             }
-            TypeDefinition::Literal { .. } => {
+            Literal { .. } => {
                 panic!("Literal type does not have an exact size")
             }
-            TypeDefinition::Variant { .. } => panic!("Variant type does not have an exact size"),
-            TypeDefinition::Object => panic!("Object type does not have an exact size"),
-            TypeDefinition::TypeInstance { .. } => {
+            Variant { .. } => panic!("Variant type does not have an exact size"),
+            Object => panic!("Object type does not have an exact size"),
+            TypeInstance { .. } => {
                 panic!("TypeInstance does not have an exact size")
             }
         }
     }
 
     pub fn origin_id(&self) -> TypeId {
+        use TypeDefinition::*;
+
         match self {
-            TypeDefinition::Origin { id, .. } => *id,
-            TypeDefinition::Literal { origin_id, .. }
-            | TypeDefinition::Variant { origin_id, .. }
-            | TypeDefinition::Function { origin_id, .. }
-            | TypeDefinition::TypeInstance { origin_id, .. } => *origin_id,
-            TypeDefinition::Object => TypeId(0),
+            Origin { id, .. } | EmbeddedType { id, .. } => *id,
+            Literal { origin_id, .. }
+            | Variant { origin_id, .. }
+            | Function { origin_id, .. }
+            | TypeInstance { origin_id, .. } => *origin_id,
+            Object => TypeId(0),
         }
     }
 
     pub fn size(&self) -> TypeSize {
+        use TypeDefinition::*;
+
         match self {
-            TypeDefinition::Origin { size, .. } | TypeDefinition::Function { size, .. } => *size,
-            TypeDefinition::Literal { .. } => TypeSize::OriginSize,
-            TypeDefinition::Variant { .. } => TypeSize::UnionSize,
-            TypeDefinition::Object => TypeSize::Dynamic,
-            TypeDefinition::TypeInstance { .. } => TypeSize::Dynamic,
+            Origin { size, .. } | Function { size, .. } | EmbeddedType { size, .. } => *size,
+            Literal { .. } => TypeSize::OriginSize,
+            Variant { .. } => TypeSize::UnionSize,
+            Object => TypeSize::Dynamic,
+            TypeInstance { .. } => TypeSize::Dynamic,
         }
     }
 
@@ -320,10 +341,10 @@ impl<'a> TypeDefinition<'a> {
     fn is_float32(&self) -> bool {
         matches!(
             self,
-            TypeDefinition::Origin {
-                name: TypeName::Embedded(EmbeddedType::Primitive(PrimitiveType::Floating(
+            TypeDefinition::EmbeddedType {
+                name: EmbeddedTypeName::Primitive(PrimitiveType::Floating(
                     FloatingNumber::Float32
-                ))),
+                )),
                 ..
             }
         )
@@ -332,10 +353,10 @@ impl<'a> TypeDefinition<'a> {
     fn is_float64(&self) -> bool {
         matches!(
             self,
-            TypeDefinition::Origin {
-                name: TypeName::Embedded(EmbeddedType::Primitive(PrimitiveType::Floating(
+            TypeDefinition::EmbeddedType {
+                name: EmbeddedTypeName::Primitive(PrimitiveType::Floating(
                     FloatingNumber::Float64
-                ))),
+                )),
                 ..
             }
         )
@@ -344,10 +365,10 @@ impl<'a> TypeDefinition<'a> {
     fn is_floating(&self) -> bool {
         matches!(
             self,
-            TypeDefinition::Origin {
-                name: TypeName::Embedded(EmbeddedType::Primitive(PrimitiveType::Floating(
+            TypeDefinition::EmbeddedType {
+                name: EmbeddedTypeName::Primitive(PrimitiveType::Floating(
                     FloatingNumber::Float32 | FloatingNumber::Float64
-                ))),
+                )),
                 ..
             }
         )
@@ -356,15 +377,15 @@ impl<'a> TypeDefinition<'a> {
     fn is_signed_number(&self) -> bool {
         matches!(
             self,
-            TypeDefinition::Origin {
-                name: TypeName::Embedded(EmbeddedType::Primitive(PrimitiveType::Integer(
+            TypeDefinition::EmbeddedType {
+                name: EmbeddedTypeName::Primitive(PrimitiveType::Integer(
                     IntegerNumber::Int8
                         | IntegerNumber::Int16
                         | IntegerNumber::Int32
                         | IntegerNumber::Int64
                         | IntegerNumber::Int128
                         | IntegerNumber::IntSize
-                ))),
+                )),
                 ..
             }
         )
@@ -373,15 +394,15 @@ impl<'a> TypeDefinition<'a> {
     fn is_unsigned_number(&self) -> bool {
         matches!(
             self,
-            TypeDefinition::Origin {
-                name: TypeName::Embedded(EmbeddedType::Primitive(PrimitiveType::Integer(
+            TypeDefinition::EmbeddedType {
+                name: EmbeddedTypeName::Primitive(PrimitiveType::Integer(
                     IntegerNumber::UInt8
                         | IntegerNumber::UInt16
                         | IntegerNumber::UInt32
                         | IntegerNumber::UInt64
                         | IntegerNumber::UInt128
                         | IntegerNumber::UIntSize
-                ))),
+                )),
                 ..
             }
         )

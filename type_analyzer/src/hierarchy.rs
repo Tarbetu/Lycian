@@ -60,306 +60,205 @@ impl<'a> Hierarchy<'a> {
             (EMBEDDED_TYPES.object, TypeDefinition::Object),
             (
                 EMBEDDED_TYPES.int8,
-                TypeDefinition::Origin {
+                TypeDefinition::EmbeddedType {
                     id: EMBEDDED_TYPES.int8,
-                    name: TypeName::Embedded(EmbeddedType::Primitive(PrimitiveType::Integer(
-                        IntegerNumber::Int8,
-                    ))),
-                    parent_ids: HashMap::new(),
+                    name: EmbeddedTypeName::Primitive(PrimitiveType::Integer(IntegerNumber::Int8)),
+
                     size: TypeSize::Exact(1),
-                    node: None,
-                    constructors: vec![],
-                    static_methods: vec![],
                 },
             ),
             (
                 EMBEDDED_TYPES.int16,
-                TypeDefinition::Origin {
+                TypeDefinition::EmbeddedType {
                     id: EMBEDDED_TYPES.int16,
-                    name: TypeName::Embedded(EmbeddedType::Primitive(PrimitiveType::Integer(
-                        IntegerNumber::Int16,
-                    ))),
-                    parent_ids: HashMap::new(),
+                    name: EmbeddedTypeName::Primitive(PrimitiveType::Integer(IntegerNumber::Int16)),
                     size: TypeSize::Exact(2),
-                    node: None,
-                    constructors: vec![],
-                    static_methods: vec![],
                 },
             ),
             (
                 EMBEDDED_TYPES.int32,
-                TypeDefinition::Origin {
+                TypeDefinition::EmbeddedType {
                     id: EMBEDDED_TYPES.int32,
-                    name: TypeName::Embedded(EmbeddedType::Primitive(PrimitiveType::Integer(
-                        IntegerNumber::Int32,
-                    ))),
-                    parent_ids: HashMap::new(),
+                    name: EmbeddedTypeName::Primitive(PrimitiveType::Integer(IntegerNumber::Int32)),
                     size: TypeSize::Exact(4),
-                    node: None,
-                    constructors: vec![],
-                    static_methods: vec![],
                 },
             ),
             (
                 EMBEDDED_TYPES.int64,
-                TypeDefinition::Origin {
+                TypeDefinition::EmbeddedType {
                     id: EMBEDDED_TYPES.int64,
-                    name: TypeName::Embedded(EmbeddedType::Primitive(PrimitiveType::Integer(
-                        IntegerNumber::Int64,
-                    ))),
-                    parent_ids: HashMap::new(),
+                    name: EmbeddedTypeName::Primitive(PrimitiveType::Integer(IntegerNumber::Int64)),
                     size: TypeSize::Exact(8),
-                    node: None,
-                    constructors: vec![],
-                    static_methods: vec![],
                 },
             ),
             (
                 EMBEDDED_TYPES.int128,
-                TypeDefinition::Origin {
+                TypeDefinition::EmbeddedType {
                     id: EMBEDDED_TYPES.int128,
-                    name: TypeName::Embedded(EmbeddedType::Primitive(PrimitiveType::Integer(
+                    name: EmbeddedTypeName::Primitive(PrimitiveType::Integer(
                         IntegerNumber::Int128,
-                    ))),
-                    parent_ids: HashMap::new(),
+                    )),
                     size: TypeSize::Exact(16),
-                    node: None,
-                    constructors: vec![],
-                    static_methods: vec![],
                 },
             ),
             (
                 EMBEDDED_TYPES.intSize,
-                TypeDefinition::Origin {
+                TypeDefinition::EmbeddedType {
                     id: EMBEDDED_TYPES.intSize,
-                    name: TypeName::Embedded(EmbeddedType::Primitive(PrimitiveType::Integer(
+                    name: EmbeddedTypeName::Primitive(PrimitiveType::Integer(
                         IntegerNumber::IntSize,
-                    ))),
-                    parent_ids: HashMap::new(),
+                    )),
                     size: TypeSize::PointerSized,
-                    node: None,
-                    constructors: vec![],
-                    static_methods: vec![],
                 },
             ),
             (
                 EMBEDDED_TYPES.uInt8,
-                TypeDefinition::Origin {
+                TypeDefinition::EmbeddedType {
                     id: EMBEDDED_TYPES.uInt8,
-                    name: TypeName::Embedded(EmbeddedType::Primitive(PrimitiveType::Integer(
-                        IntegerNumber::UInt8,
-                    ))),
-                    parent_ids: HashMap::new(),
+                    name: EmbeddedTypeName::Primitive(PrimitiveType::Integer(IntegerNumber::UInt8)),
                     size: TypeSize::Exact(1),
-                    node: None,
-                    constructors: vec![],
-                    static_methods: vec![],
                 },
             ),
             (
                 EMBEDDED_TYPES.uInt16,
-                TypeDefinition::Origin {
+                TypeDefinition::EmbeddedType {
                     id: EMBEDDED_TYPES.uInt16,
-                    name: TypeName::Embedded(EmbeddedType::Primitive(PrimitiveType::Integer(
+                    name: EmbeddedTypeName::Primitive(PrimitiveType::Integer(
                         IntegerNumber::UInt16,
-                    ))),
-                    parent_ids: HashMap::new(),
+                    )),
                     size: TypeSize::Exact(2),
-                    node: None,
-                    constructors: vec![],
-                    static_methods: vec![],
                 },
             ),
             (
                 EMBEDDED_TYPES.uInt32,
-                TypeDefinition::Origin {
+                TypeDefinition::EmbeddedType {
                     id: EMBEDDED_TYPES.uInt32,
-                    name: TypeName::Embedded(EmbeddedType::Primitive(PrimitiveType::Integer(
+                    name: EmbeddedTypeName::Primitive(PrimitiveType::Integer(
                         IntegerNumber::UInt32,
-                    ))),
-                    parent_ids: HashMap::new(),
+                    )),
                     size: TypeSize::Exact(4),
-                    node: None,
-                    constructors: vec![],
-                    static_methods: vec![],
                 },
             ),
             (
                 EMBEDDED_TYPES.uInt64,
-                TypeDefinition::Origin {
+                TypeDefinition::EmbeddedType {
                     id: EMBEDDED_TYPES.uInt64,
-                    name: TypeName::Embedded(EmbeddedType::Primitive(PrimitiveType::Integer(
+                    name: EmbeddedTypeName::Primitive(PrimitiveType::Integer(
                         IntegerNumber::UInt64,
-                    ))),
-                    parent_ids: HashMap::new(),
+                    )),
                     size: TypeSize::Exact(8),
-                    node: None,
-                    constructors: vec![],
-                    static_methods: vec![],
                 },
             ),
             (
                 EMBEDDED_TYPES.uInt128,
-                TypeDefinition::Origin {
+                TypeDefinition::EmbeddedType {
                     id: EMBEDDED_TYPES.uInt128,
-                    name: TypeName::Embedded(EmbeddedType::Primitive(PrimitiveType::Integer(
+                    name: EmbeddedTypeName::Primitive(PrimitiveType::Integer(
                         IntegerNumber::UInt128,
-                    ))),
-                    parent_ids: HashMap::new(),
+                    )),
                     size: TypeSize::Exact(16),
-                    node: None,
-                    constructors: vec![],
-                    static_methods: vec![],
                 },
             ),
             (
                 EMBEDDED_TYPES.uIntSize,
-                TypeDefinition::Origin {
+                TypeDefinition::EmbeddedType {
                     id: EMBEDDED_TYPES.uIntSize,
-                    name: TypeName::Embedded(EmbeddedType::Primitive(PrimitiveType::Integer(
+                    name: EmbeddedTypeName::Primitive(PrimitiveType::Integer(
                         IntegerNumber::UIntSize,
-                    ))),
-                    parent_ids: HashMap::new(),
+                    )),
                     size: TypeSize::PointerSized,
-                    node: None,
-                    constructors: vec![],
-                    static_methods: vec![],
                 },
             ),
             (
                 EMBEDDED_TYPES.float32,
-                TypeDefinition::Origin {
+                TypeDefinition::EmbeddedType {
                     id: EMBEDDED_TYPES.float32,
-                    name: TypeName::Embedded(EmbeddedType::Primitive(PrimitiveType::Floating(
+                    name: EmbeddedTypeName::Primitive(PrimitiveType::Floating(
                         FloatingNumber::Float32,
-                    ))),
-                    parent_ids: HashMap::new(),
+                    )),
                     size: TypeSize::Exact(4),
-                    node: None,
-                    constructors: vec![],
-                    static_methods: vec![],
                 },
             ),
             (
                 EMBEDDED_TYPES.float64,
-                TypeDefinition::Origin {
+                TypeDefinition::EmbeddedType {
                     id: EMBEDDED_TYPES.float64,
-                    name: TypeName::Embedded(EmbeddedType::Primitive(PrimitiveType::Floating(
+                    name: EmbeddedTypeName::Primitive(PrimitiveType::Floating(
                         FloatingNumber::Float64,
-                    ))),
-                    parent_ids: HashMap::new(),
+                    )),
                     size: TypeSize::Exact(8),
-                    node: None,
-                    constructors: vec![],
-                    static_methods: vec![],
                 },
             ),
             (
                 EMBEDDED_TYPES.boolean,
-                TypeDefinition::Origin {
+                TypeDefinition::EmbeddedType {
                     id: EMBEDDED_TYPES.boolean,
-                    name: TypeName::Embedded(EmbeddedType::Primitive(PrimitiveType::Boolean)),
-                    parent_ids: HashMap::new(),
+                    name: EmbeddedTypeName::Primitive(PrimitiveType::Boolean),
                     size: TypeSize::Exact(1),
-                    node: None,
-                    constructors: vec![],
-                    static_methods: vec![],
                 },
             ),
             (
                 EMBEDDED_TYPES.char,
-                TypeDefinition::Origin {
+                TypeDefinition::EmbeddedType {
                     id: EMBEDDED_TYPES.char,
-                    name: TypeName::Embedded(EmbeddedType::Primitive(PrimitiveType::Char)),
-                    parent_ids: HashMap::new(),
+                    name: EmbeddedTypeName::Primitive(PrimitiveType::Char),
                     size: TypeSize::Exact(4),
-                    node: None,
-                    constructors: vec![],
-                    static_methods: vec![],
                 },
             ),
             (
                 EMBEDDED_TYPES.void,
-                TypeDefinition::Origin {
+                TypeDefinition::EmbeddedType {
                     id: EMBEDDED_TYPES.void,
-                    name: TypeName::Embedded(EmbeddedType::Primitive(PrimitiveType::Void)),
-                    parent_ids: HashMap::new(),
+                    name: EmbeddedTypeName::Primitive(PrimitiveType::Void),
                     size: TypeSize::Exact(0),
-                    node: None,
-                    constructors: vec![],
-                    static_methods: vec![],
                 },
             ),
             (
                 EMBEDDED_TYPES.array,
-                TypeDefinition::Origin {
+                TypeDefinition::EmbeddedType {
                     id: EMBEDDED_TYPES.array,
-                    name: TypeName::Embedded(EmbeddedType::Compound(CompoundType::Array)),
-                    parent_ids: HashMap::new(),
+                    name: EmbeddedTypeName::Compound(CompoundType::Array),
                     size: TypeSize::PointerSized,
-                    node: None,
-                    constructors: vec![],
-                    static_methods: vec![],
                 },
             ),
             (
                 EMBEDDED_TYPES.linked_list,
-                TypeDefinition::Origin {
+                TypeDefinition::EmbeddedType {
                     id: EMBEDDED_TYPES.linked_list,
-                    name: TypeName::Embedded(EmbeddedType::Compound(CompoundType::LinkedList)),
-                    parent_ids: HashMap::new(),
+                    name: EmbeddedTypeName::Compound(CompoundType::LinkedList),
                     size: TypeSize::PointerSized,
-                    node: None,
-                    constructors: vec![],
-                    static_methods: vec![],
                 },
             ),
             (
                 EMBEDDED_TYPES.string,
-                TypeDefinition::Origin {
+                TypeDefinition::EmbeddedType {
                     id: EMBEDDED_TYPES.string,
-                    name: TypeName::Embedded(EmbeddedType::Compound(CompoundType::String)),
-                    parent_ids: HashMap::new(),
+                    name: EmbeddedTypeName::Compound(CompoundType::String),
                     size: TypeSize::PointerSized,
-                    node: None,
-                    constructors: vec![],
-                    static_methods: vec![],
                 },
             ),
             (
                 EMBEDDED_TYPES.function,
-                TypeDefinition::Origin {
+                TypeDefinition::EmbeddedType {
                     id: EMBEDDED_TYPES.function,
-                    name: TypeName::Embedded(EmbeddedType::Function),
-                    parent_ids: HashMap::new(),
+                    name: EmbeddedTypeName::Function,
                     size: TypeSize::ClosureSize,
-                    node: None,
-                    constructors: vec![],
-                    static_methods: vec![],
                 },
             ),
             (
                 EMBEDDED_TYPES.literal_integer,
-                TypeDefinition::Origin {
+                TypeDefinition::EmbeddedType {
                     id: EMBEDDED_TYPES.literal_integer,
-                    name: TypeName::Embedded(EmbeddedType::Function),
-                    parent_ids: HashMap::new(),
+                    name: EmbeddedTypeName::Function,
                     size: TypeSize::Exact(4),
-                    node: None,
-                    constructors: vec![],
-                    static_methods: vec![],
                 },
             ),
             (
                 EMBEDDED_TYPES.literal_integer,
-                TypeDefinition::Origin {
+                TypeDefinition::EmbeddedType {
                     id: EMBEDDED_TYPES.literal_float,
-                    name: TypeName::Embedded(EmbeddedType::Function),
-                    parent_ids: HashMap::new(),
+                    name: EmbeddedTypeName::Function,
                     size: TypeSize::Exact(8),
-                    node: None,
-                    constructors: vec![],
-                    static_methods: vec![],
                 },
             ),
         ]);
@@ -394,7 +293,13 @@ impl<'a> Hierarchy<'a> {
                 class_type_id,
                 TypeDefinition::Origin {
                     id: class_type_id,
-                    name: TypeName::Custom(class.name.clone()),
+                    binding_id: self
+                        .scope_hierarchy
+                        .class_to_binding_id
+                        .get(&class.name)
+                        .copied()
+                        .unwrap(),
+                    name: class.name.clone(),
                     parent_ids: HashMap::new(), // This will handled by inheritence analysis
                     size: TypeSize::UnionSize,
                     node: Some(class),
@@ -416,7 +321,12 @@ impl<'a> Hierarchy<'a> {
                     variant_id,
                     TypeDefinition::Variant {
                         id: variant_id,
-                        variant_name: constructor_name.clone(),
+                        binding_id: class_scope
+                            .bindings
+                            .get(&constructor_name.into())
+                            .copied()
+                            .unwrap(),
+                        name: constructor_name.clone(),
                         origin_id: class_type_id,
                         node: patterns,
                         instance_methods,
@@ -451,6 +361,29 @@ impl<'a> Hierarchy<'a> {
             })
             .collect()
     }
+
+    // fn collect_inherited_constructors(&self, class: &syntax::Class) -> Vec<scope::BindingId> {
+    //     class
+    //         .ancestors
+    //         .iter()
+    //         .map(|ancestor_name| {
+    //             let class_scope = self
+    //                 .scope_hierarchy
+    //                 .scopes
+    //                 .get(self.scope_hierarchy.class_to_scope_id(ancestor_name))
+    //                 .unwrap();
+
+    //             let scope::SyntaxNode::Class(ancestor_class) = class_scope.node else {
+    //                 unimplemented!()
+    //             };
+
+    //             ancestor_class.constructors.iter().map(|(constructor_name, _parameters)| {
+
+    //             })
+    //         })
+    //         .flatten()
+    //         .collect()
+    // }
 
     // fn static_methods(&self, class_scope: &syntax::Class) -> Vec<scope::BindingId> {
     //     let class_scope_id = self
