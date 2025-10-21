@@ -63,7 +63,7 @@ Since the early stages of von Neumann computers, computation has evolved:
 Yet our languages haven't caught up. We still:
 - Write sequential code, manually managing parallelism
 - Mix computational logic with infrastructure concerns
-- Choose between abstraction (Haskell) or control (C), sacrificing one for the other
+- Choose between abstraction (Haskell) or control (C), sacrificing one for the other. (Lycian is not a typical systems languages, but aims to be systems language for an abstract machine)
 
 ### Lycian's Approach
 
@@ -80,6 +80,7 @@ How?
 ## Philosophy
 
 Lycian also has a "Zen" text! It might be vague to declare a "Zen" in early stages, but my main goal is determine the motivation and remind myself the fundamental ideas of Lycian.
+
 [The Way of Lycian](/doc/the_way_of_lycian.md)
 
 ## Contributing
