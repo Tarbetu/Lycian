@@ -112,8 +112,8 @@ pub enum TypeDefinition<'a> {
         parent_ids: HashMap<usize, Vec<TypeId>>,
         size: TypeSize,
         node: Option<&'a syntax::Class>,
-        constructors: Vec<scope::BindingId>,
-        static_methods: Vec<scope::BindingId>,
+        constructors: Vec<(Rc<String>, scope::BindingId)>,
+        static_methods: Vec<(Rc<String>, scope::BindingId)>,
     },
     Variant {
         id: TypeId,
@@ -121,7 +121,7 @@ pub enum TypeDefinition<'a> {
         name: Rc<String>,
         origin_id: TypeId,
         node: &'a [syntax::Pattern],
-        instance_methods: Vec<scope::BindingId>
+        instance_methods: Vec<(Rc<String>, scope::BindingId)>
     },
     Function {
         id: TypeId,
