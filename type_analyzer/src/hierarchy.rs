@@ -371,7 +371,6 @@ impl<'a> Hierarchy<'a> {
                     (class.name.clone(), *binding_id)
                 }),
         );
-
         constructors
     }
 
@@ -393,16 +392,18 @@ impl<'a> Hierarchy<'a> {
                 ancestor_class
                     .constructors
                     .iter()
-                    .map(|(constructor_name, _parameters)| {
-                        let (_name, binding_id) = ancestor_class_scope
+                    .filter_map(|(constructor_name, _parameters)| {
+                        if let Some((_name, binding_id)) = ancestor_class_scope
                             .bindings
                             .iter()
                             .find(|(binding_name, _binding_id)| {
                                 binding_name.as_ref() == constructor_name.as_ref()
                             })
-                            .unwrap();
-
-                        (ancestor_class.name.clone(), *binding_id)
+                        {
+                            Some((ancestor_class.name.clone(), *binding_id))
+                        } else {
+                            None
+                        }
                     })
             })
             .flatten()
@@ -442,6 +443,17 @@ impl<'a> Hierarchy<'a> {
             .collect()
     }
 
+    fn inherited_static_methods(
+        &self,
+        class: &syntax::Class,
+        scopes_buffer: &HashMap<Rc<String>, &scope::Scope<'_>>,
+    ) -> Vec<(Rc<String>, scope::BindingId)> {
+        class
+            .ancestors
+            .iter()
+            .filter_map(|ancestor_name| unreachable!())
+            .collect()
+    }
     fn instance_methods(
         &self,
         constructor_name: &str,
