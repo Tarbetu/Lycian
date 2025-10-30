@@ -26,7 +26,7 @@ impl From<&Rc<String>> for PatternName {
     }
 }
 
-impl AsRef<str> for &PatternName {
+impl AsRef<str> for PatternName {
     fn as_ref(&self) -> &str {
         match self {
             PatternName::Name(name) => name.as_ref(),

@@ -321,7 +321,7 @@ impl<'a> Hierarchy<'a> {
                 variants.insert(constructor_name.clone(), variant_id);
 
                 let instance_methods =
-                    self.instance_methods(constructor_name.as_str(), class_scope);
+                    self.instance_methods(constructor_name.as_str(), class, &scopes_buffer);
 
                 self.types.insert(
                     variant_id,
@@ -486,16 +486,82 @@ impl<'a> Hierarchy<'a> {
     fn instance_methods(
         &self,
         constructor_name: &str,
-        class_scope: &scope::Scope<'_>,
+        class: &syntax::Class,
+        scopes_buffer: &HashMap<Rc<String>, &scope::Scope<'_>>,
     ) -> Vec<(Rc<String>, scope::BindingId)> {
-        unimplemented!()
+        let mut methods = self.inherited_instance_methods(constructor_name, class, scopes_buffer);
+
+        let class_scope = scopes_buffer.get(&class.name).unwrap();
+
+        methods.extend(
+            class_scope
+                .bindings
+                .iter()
+                .filter_map(|(pattern_name, binding_id)| {
+                    let syntax::PatternName::Name(method_name) = pattern_name else {
+                        unreachable!()
+                    };
+
+                    class.methods.get(method_name)?.iter().find(|method| {
+                        method
+                            .params
+                            .first()
+                            .map(|param| {
+                                param.name == syntax::PatternName::ClassSelf
+                                    || param.name.as_ref() == constructor_name
+                            })
+                            .unwrap_or(true)
+                    })?;
+
+                    Some((class.name.clone(), *binding_id))
+                }),
+        );
+
+        methods
     }
 
-    fn get_class_scope_id(&self, class_name: &Rc<String>) -> scope::ScopeId {
-        self.scope_hierarchy
-            .class_to_scope_id
-            .get(class_name)
-            .copied()
-            .unwrap()
+    fn inherited_instance_methods(
+        &self,
+        constructor_name: &str,
+        class: &syntax::Class,
+        scopes_buffer: &HashMap<Rc<String>, &scope::Scope<'_>>,
+    ) -> Vec<(Rc<String>, scope::BindingId)> {
+        class
+            .ancestors
+            .iter()
+            .flat_map(|ancestor_name| {
+                let ancestor_class_scope = scopes_buffer.get(ancestor_name).unwrap();
+
+                let scope::SyntaxNode::Class(ancestor_class) = &ancestor_class_scope.node else {
+                    unreachable!()
+                };
+
+                ancestor_class_scope
+                    .bindings
+                    .iter()
+                    .filter_map(|(pattern_name, binding_id)| {
+                        let syntax::PatternName::Name(method_name) = pattern_name else {
+                            unreachable!()
+                        };
+
+                        ancestor_class
+                            .methods
+                            .get(method_name)?
+                            .iter()
+                            .find(|method| {
+                                method
+                                    .params
+                                    .first()
+                                    .map(|param| {
+                                        param.name == syntax::PatternName::ClassSelf
+                                            || param.name.as_ref() == constructor_name
+                                    })
+                                    .unwrap_or(true)
+                            })?;
+
+                        Some((ancestor_name.clone(), *binding_id))
+                    })
+            })
+            .collect()
     }
 }
