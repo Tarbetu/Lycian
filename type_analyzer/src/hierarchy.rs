@@ -1,7 +1,7 @@
 mod embedded_types;
 
 use crate::definition::*;
-use crate::error::TypeError;
+use crate::error::{TypeError, TypeErrorKind, TypeResult};
 pub use embedded_types::*;
 use scope::ExprId;
 use std::collections::{HashMap, HashSet};
@@ -30,7 +30,7 @@ pub struct ExprToTypeTable {
 }
 
 impl<'a> Hierarchy<'a> {
-    pub(crate) fn new(scope_hierarchy: scope::Hierarchy<'a>) -> Self {
+    pub(crate) fn new(scope_hierarchy: scope::Hierarchy<'a>) -> TypeResult<Self> {
         Self {
             types: HashMap::new(),
             last_id: TypeId(24),
@@ -266,7 +266,7 @@ impl<'a> Hierarchy<'a> {
         self
     }
 
-    fn install_custom_types(mut self) -> Self {
+    fn install_custom_types(mut self) -> TypeResult<Self> {
         let scopes_buffer: HashMap<_, _> = self
             .scope_hierarchy
             .scopes
@@ -291,8 +291,8 @@ impl<'a> Hierarchy<'a> {
             self.name_to_origin_id
                 .insert(class.name.clone(), class_type_id);
 
-            let constructors = self.constructor_bindings(class, &scopes_buffer);
-            let static_methods = self.static_methods(class, &scopes_buffer);
+            let constructors = self.constructors(class, &scopes_buffer)?;
+            let static_methods = self.static_methods(class, &scopes_buffer)?;
 
             self.types.insert(
                 class_type_id,
@@ -321,7 +321,7 @@ impl<'a> Hierarchy<'a> {
                 variants.insert(constructor_name.clone(), variant_id);
 
                 let instance_methods =
-                    self.instance_methods(constructor_name.as_str(), class, &scopes_buffer);
+                    self.instance_methods(constructor_name.as_str(), class, &scopes_buffer)?;
 
                 self.types.insert(
                     variant_id,
@@ -343,15 +343,35 @@ impl<'a> Hierarchy<'a> {
             self.variants_of_origin.insert(class_type_id, variants);
         }
 
-        self
+        Ok(self)
     }
 
-    fn constructor_bindings(
+    fn constructors<'m>(
         &self,
-        class: &syntax::Class,
-        scopes_buffer: &HashMap<Rc<String>, &scope::Scope<'_>>,
-    ) -> Vec<(Rc<String>, scope::BindingId)> {
-        let mut constructors = self.inherited_constructors(class, scopes_buffer);
+        class: &'m syntax::Class,
+        scopes_buffer: &'m HashMap<Rc<String>, &scope::Scope<'_>>,
+    ) -> TypeResult<HashSet<(Rc<String>, scope::BindingId)>> {
+        self.build_constructors(class, scopes_buffer, &mut HashSet::new())
+    }
+
+    fn build_constructors<'m>(
+        &self,
+        class: &'m syntax::Class,
+        scopes_buffer: &'m HashMap<Rc<String>, &scope::Scope<'_>>,
+        visited: &mut HashSet<&'m str>,
+    ) -> TypeResult<HashSet<(Rc<String>, scope::BindingId)>> {
+        if visited.contains(class.name.as_str()) {
+            return Err(TypeError {
+                kind: TypeErrorKind::CyclicDependency,
+                message: "Mutual dependency detected!",
+                type_id: TypeId(0),
+                span: class.span.clone(),
+            });
+        }
+
+        visited.insert(&class.name);
+
+        let mut constructors = self.inherited_constructors(class, scopes_buffer, visited)?;
 
         let class_scope = *scopes_buffer.get(&class.name).unwrap();
 
@@ -371,50 +391,56 @@ impl<'a> Hierarchy<'a> {
                     (class.name.clone(), *binding_id)
                 }),
         );
-        constructors
+        Ok(constructors)
     }
 
-    fn inherited_constructors(
+    fn inherited_constructors<'m>(
         &self,
         class: &syntax::Class,
-        scopes_buffer: &HashMap<Rc<String>, &scope::Scope<'_>>,
-    ) -> Vec<(Rc<String>, scope::BindingId)> {
-        class
-            .ancestors
-            .iter()
-            .flat_map(|ancestor_name| {
-                let ancestor_class_scope = scopes_buffer.get(ancestor_name).unwrap();
+        scopes_buffer: &'m HashMap<Rc<String>, &scope::Scope<'_>>,
+        visited: &mut HashSet<&'m str>,
+    ) -> TypeResult<HashSet<(Rc<String>, scope::BindingId)>> {
+        let mut methods = HashSet::new();
 
-                let scope::SyntaxNode::Class(ancestor_class) = ancestor_class_scope.node else {
-                    unreachable!()
-                };
+        for ancestor_name in class.ancestors.iter() {
+            let ancestor_class_scope = scopes_buffer.get(ancestor_name).unwrap();
 
-                ancestor_class
-                    .constructors
-                    .iter()
-                    .filter_map(|(constructor_name, _parameters)| {
-                        if let Some((_name, binding_id)) = ancestor_class_scope
-                            .bindings
-                            .iter()
-                            .find(|(binding_name, _binding_id)| {
-                                binding_name.as_ref() == constructor_name.as_ref()
-                            })
-                        {
-                            Some((ancestor_class.name.clone(), *binding_id))
-                        } else {
-                            None
-                        }
-                    })
-            })
-            .collect()
+            let scope::SyntaxNode::Class(ancestor_class) = &ancestor_class_scope.node else {
+                unreachable!()
+            };
+
+            methods.extend(self.collect_static_methods(ancestor_class, scopes_buffer, visited)?);
+        }
+
+        Ok(methods)
     }
 
-    fn static_methods(
+    fn static_methods<'m>(
         &self,
-        class: &syntax::Class,
-        scopes_buffer: &HashMap<Rc<String>, &scope::Scope<'_>>,
-    ) -> Vec<(Rc<String>, scope::BindingId)> {
-        let mut methods = self.inherited_static_methods(class, scopes_buffer);
+        class: &'m syntax::Class,
+        scopes_buffer: &'m HashMap<Rc<String>, &scope::Scope<'_>>,
+    ) -> TypeResult<HashSet<(Rc<String>, scope::BindingId)>> {
+        self.collect_static_methods(class, scopes_buffer, &mut HashSet::new())
+    }
+
+    fn collect_static_methods<'m>(
+        &self,
+        class: &'m syntax::Class,
+        scopes_buffer: &'m HashMap<Rc<String>, &scope::Scope<'_>>,
+        visited: &mut HashSet<&'m str>,
+    ) -> TypeResult<HashSet<(Rc<String>, scope::BindingId)>> {
+        if visited.contains(class.name.as_str()) {
+            return Err(TypeError {
+                kind: TypeErrorKind::CyclicDependency,
+                message: "Mutual dependency detected!",
+                type_id: TypeId(0),
+                span: class.span.clone(),
+            });
+        }
+
+        visited.insert(&class.name);
+
+        let mut methods = self.inherited_static_methods(class, scopes_buffer, visited)?;
 
         let class_scope = scopes_buffer.get(&class.name).unwrap();
 
@@ -439,48 +465,28 @@ impl<'a> Hierarchy<'a> {
                 }),
         );
 
-        methods
+        Ok(methods)
     }
 
-    fn inherited_static_methods(
+    fn inherited_static_methods<'m>(
         &self,
-        class: &syntax::Class,
-        scopes_buffer: &HashMap<Rc<String>, &scope::Scope<'_>>,
-    ) -> Vec<(Rc<String>, scope::BindingId)> {
-        class
-            .ancestors
-            .iter()
-            .flat_map(|ancestor_name| {
-                let ancestor_class_scope = scopes_buffer.get(ancestor_name).unwrap();
+        class: &'m syntax::Class,
+        scopes_buffer: &'m HashMap<Rc<String>, &scope::Scope<'_>>,
+        visited: &mut HashSet<&'m str>,
+    ) -> TypeResult<HashSet<(Rc<String>, scope::BindingId)>> {
+        let mut methods = HashSet::new();
 
-                let scope::SyntaxNode::Class(ancestor_class) = &ancestor_class_scope.node else {
-                    unreachable!()
-                };
+        for ancestor_name in class.ancestors.iter() {
+            let ancestor_class_scope = scopes_buffer.get(ancestor_name).unwrap();
 
-                ancestor_class_scope
-                    .bindings
-                    .iter()
-                    .filter_map(|(pattern_name, binding_id)| {
-                        let syntax::PatternName::Name(method_name) = pattern_name else {
-                            unreachable!()
-                        };
+            let scope::SyntaxNode::Class(ancestor_class) = &ancestor_class_scope.node else {
+                unreachable!()
+            };
 
-                        ancestor_class
-                            .methods
-                            .get(method_name)?
-                            .iter()
-                            .find(|method| {
-                                method
-                                    .params
-                                    .first()
-                                    .map(|param| param.name != syntax::PatternName::ClassSelf)
-                                    .unwrap_or(true)
-                            })?;
+            methods.extend(self.collect_static_methods(ancestor_class, scopes_buffer, visited)?);
+        }
 
-                        Some((ancestor_name.clone(), *binding_id))
-                    })
-            })
-            .collect()
+        Ok(methods)
     }
 
     fn instance_methods(
@@ -488,8 +494,29 @@ impl<'a> Hierarchy<'a> {
         constructor_name: &str,
         class: &syntax::Class,
         scopes_buffer: &HashMap<Rc<String>, &scope::Scope<'_>>,
-    ) -> Vec<(Rc<String>, scope::BindingId)> {
-        let mut methods = self.inherited_instance_methods(constructor_name, class, scopes_buffer);
+    ) -> TypeResult<HashSet<(Rc<String>, scope::BindingId)>> {
+        self.collect_instance_methods(constructor_name, class, scopes_buffer, &mut HashSet::new())
+    }
+
+    fn collect_instance_methods<'m>(
+        &self,
+        constructor_name: &str,
+        class: &'m syntax::Class,
+        scopes_buffer: &'m HashMap<Rc<String>, &scope::Scope<'_>>,
+        visited: &mut HashSet<&'m str>,
+    ) -> TypeResult<HashSet<(Rc<String>, scope::BindingId)>> {
+        if visited.contains(class.name.as_str()) {
+            return Err(TypeError {
+                kind: TypeErrorKind::CyclicDependency,
+                message: "Mutual dependency detected!",
+                type_id: TypeId(0),
+                span: class.span.clone(),
+            });
+        }
+
+        visited.insert(&class.name);
+
+        let mut methods = self.inherited_instance_methods(class, scopes_buffer, visited)?;
 
         let class_scope = scopes_buffer.get(&class.name).unwrap();
 
@@ -517,51 +544,34 @@ impl<'a> Hierarchy<'a> {
                 }),
         );
 
-        methods
+        Ok(methods)
     }
 
-    fn inherited_instance_methods(
+    fn inherited_instance_methods<'m>(
         &self,
-        constructor_name: &str,
-        class: &syntax::Class,
-        scopes_buffer: &HashMap<Rc<String>, &scope::Scope<'_>>,
-    ) -> Vec<(Rc<String>, scope::BindingId)> {
-        class
-            .ancestors
-            .iter()
-            .flat_map(|ancestor_name| {
-                let ancestor_class_scope = scopes_buffer.get(ancestor_name).unwrap();
+        class: &'m syntax::Class,
+        scopes_buffer: &'m HashMap<Rc<String>, &scope::Scope<'_>>,
+        visited: &mut HashSet<&'m str>,
+    ) -> TypeResult<HashSet<(Rc<String>, scope::BindingId)>> {
+        let mut methods = HashSet::new();
 
-                let scope::SyntaxNode::Class(ancestor_class) = &ancestor_class_scope.node else {
-                    unreachable!()
-                };
+        for ancestor_name in class.ancestors.iter() {
+            let ancestor_class_scope = scopes_buffer.get(ancestor_name).unwrap();
 
-                ancestor_class_scope
-                    .bindings
-                    .iter()
-                    .filter_map(|(pattern_name, binding_id)| {
-                        let syntax::PatternName::Name(method_name) = pattern_name else {
-                            unreachable!()
-                        };
+            let scope::SyntaxNode::Class(ancestor_class) = &ancestor_class_scope.node else {
+                unreachable!()
+            };
 
-                        ancestor_class
-                            .methods
-                            .get(method_name)?
-                            .iter()
-                            .find(|method| {
-                                method
-                                    .params
-                                    .first()
-                                    .map(|param| {
-                                        param.name == syntax::PatternName::ClassSelf
-                                            || param.name.as_ref() == constructor_name
-                                    })
-                                    .unwrap_or(true)
-                            })?;
+            for (constructor_name, _params) in ancestor_class.constructors.iter() {
+                methods.extend(self.collect_instance_methods(
+                    constructor_name,
+                    ancestor_class,
+                    scopes_buffer,
+                    visited,
+                )?);
+            }
+        }
 
-                        Some((ancestor_name.clone(), *binding_id))
-                    })
-            })
-            .collect()
+        Ok(methods)
     }
 }

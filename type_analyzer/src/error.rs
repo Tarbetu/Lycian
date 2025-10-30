@@ -24,6 +24,7 @@ pub enum TypeErrorKind {
     NotANumber,
     NotABoolean,
     DivisionByZero,
+    CyclicDependency,
 }
 
 impl fmt::Display for TypeErrorKind {
@@ -39,6 +40,7 @@ impl fmt::Display for TypeErrorKind {
             TypeErrorKind::NotANumber => write!(f, "Not a number"),
             TypeErrorKind::NotABoolean => write!(f, "Not a boolean"),
             TypeErrorKind::DivisionByZero => write!(f, "Division by zero"),
+            TypeErrorKind::CyclicDependency => write!(f, "Cyclic Dependency"),
         }
     }
 }
