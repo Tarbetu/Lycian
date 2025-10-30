@@ -382,7 +382,7 @@ impl<'a> Hierarchy<'a> {
         class
             .ancestors
             .iter()
-            .map(|ancestor_name| {
+            .flat_map(|ancestor_name| {
                 let ancestor_class_scope = scopes_buffer.get(ancestor_name).unwrap();
 
                 let scope::SyntaxNode::Class(ancestor_class) = ancestor_class_scope.node else {
@@ -406,7 +406,6 @@ impl<'a> Hierarchy<'a> {
                         }
                     })
             })
-            .flatten()
             .collect()
     }
 
@@ -415,32 +414,32 @@ impl<'a> Hierarchy<'a> {
         class: &syntax::Class,
         scopes_buffer: &HashMap<Rc<String>, &scope::Scope<'_>>,
     ) -> Vec<(Rc<String>, scope::BindingId)> {
+        let mut methods = self.inherited_static_methods(class, scopes_buffer);
+
         let class_scope = scopes_buffer.get(&class.name).unwrap();
 
-        class_scope
-            .bindings
-            .iter()
-            .filter_map(|(pattern_name, binding_id)| {
-                let syntax::PatternName::Name(method_name) = pattern_name else {
-                    unreachable!()
-                };
+        methods.extend(
+            class_scope
+                .bindings
+                .iter()
+                .filter_map(|(pattern_name, binding_id)| {
+                    let syntax::PatternName::Name(method_name) = pattern_name else {
+                        unreachable!()
+                    };
 
-                class
-                    .methods
-                    .get(method_name)?
-                    .iter()
-                    .find(|method| {
+                    class.methods.get(method_name)?.iter().find(|method| {
                         method
                             .params
                             .first()
                             .map(|param| param.name != syntax::PatternName::ClassSelf)
-                            .unwrap_or(false)
-                    })
-                    .map(|method| method.name.clone())?;
+                            .unwrap_or(true)
+                    })?;
 
-                Some((class.name.clone(), *binding_id))
-            })
-            .collect()
+                    Some((class.name.clone(), *binding_id))
+                }),
+        );
+
+        methods
     }
 
     fn inherited_static_methods(
@@ -451,9 +450,39 @@ impl<'a> Hierarchy<'a> {
         class
             .ancestors
             .iter()
-            .filter_map(|ancestor_name| unreachable!())
+            .flat_map(|ancestor_name| {
+                let ancestor_class_scope = scopes_buffer.get(ancestor_name).unwrap();
+
+                let scope::SyntaxNode::Class(ancestor_class) = &ancestor_class_scope.node else {
+                    unreachable!()
+                };
+
+                ancestor_class_scope
+                    .bindings
+                    .iter()
+                    .filter_map(|(pattern_name, binding_id)| {
+                        let syntax::PatternName::Name(method_name) = pattern_name else {
+                            unreachable!()
+                        };
+
+                        ancestor_class
+                            .methods
+                            .get(method_name)?
+                            .iter()
+                            .find(|method| {
+                                method
+                                    .params
+                                    .first()
+                                    .map(|param| param.name != syntax::PatternName::ClassSelf)
+                                    .unwrap_or(true)
+                            })?;
+
+                        Some((ancestor_name.clone(), *binding_id))
+                    })
+            })
             .collect()
     }
+
     fn instance_methods(
         &self,
         constructor_name: &str,
