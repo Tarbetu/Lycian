@@ -4,6 +4,10 @@ use crate::hierarchy::EMBEDDED_TYPES;
 use crate::{definition::Constraint, hierarchy::Hierarchy, TypeId};
 use std::rc::Rc;
 
+// This is awful.
+// Completely mess. We need a better constaint detective
+// - We need to symbolize them as graphs, so we can update the related types
+// - We need more minimalist ruleset to detecting type
 pub(crate) struct ConstraintDetective<'a> {
     hierarchy: Hierarchy<'a>,
     errors: Vec<TypeError>,
