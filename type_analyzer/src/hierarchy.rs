@@ -14,7 +14,7 @@ pub struct Hierarchy<'a> {
     pub variants_of_origin: HashMap<TypeId, HashMap<Rc<String>, TypeId>>,
     pub expr_to_type: ExprToTypeTable,
     pub binding_to_type: HashMap<scope::BindingId, TypeId>,
-    pub expr_constraints: HashMap<scope::ExprId, HashSet<Constraint>>,
+    pub expr_constraints: HashMap<scope::ExprId, HashSet<Hint>>,
     pub embedded_types: &'static EmbeddedTypes,
     pub type_instances: HashMap<TypeId, Vec<TypeId>>,
     pub scope_hierarchy: scope::Hierarchy<'a>,

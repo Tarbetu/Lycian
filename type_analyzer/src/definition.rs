@@ -9,7 +9,7 @@ use std::fmt::Display;
 pub struct TypeId(pub usize);
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
-pub enum Constraint {
+pub enum Hint {
     Numeric,
     Addable,
     Integer,

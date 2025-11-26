@@ -1,4 +1,3 @@
 [workspace]
-
 members = ["syntax", "scanner", "scope", "type_analyzer"]
 resolver = "2"
