@@ -22,6 +22,7 @@
             rustfmt
             pre-commit
             rustPackages.clippy
+            rust-analyzer
             gnum4
             uutils-diffutils
             gnumake
