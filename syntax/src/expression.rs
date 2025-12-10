@@ -5,14 +5,14 @@ use crate::Pattern;
 use scanner::Span;
 use std::rc::Rc;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct Expression {
     pub id: usize,
     pub kind: Box<ExpressionKind>,
     pub span: Span,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub enum ExpressionKind {
     Literal(Rc<Literal>),
     Grouping(Expression),
@@ -48,7 +48,7 @@ pub enum ExpressionKind {
     },
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Default)]
+#[derive(Copy, Clone, Debug, PartialEq, Default, Hash)]
 pub enum CallType {
     #[default]
     LazyMemoized,

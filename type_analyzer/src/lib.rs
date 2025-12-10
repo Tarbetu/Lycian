@@ -1,7 +1,7 @@
-mod constraint_detective;
 mod definition;
 mod error;
 mod hierarchy;
+mod type_checker;
 
 pub use definition::TypeId;
 

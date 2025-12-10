@@ -1,9 +1,10 @@
 use crate::{Expression, ExpressionKind};
 pub use rug::Float as RugFloat;
+use std::mem::discriminant;
 use std::ops::*;
 use std::rc::Rc;
 
-pub const PRECISION: u32 = 52;
+pub const PRECISION: u32 = 53;
 
 #[derive(Clone, Debug)]
 pub enum Literal {
@@ -23,8 +24,8 @@ impl Add for &Literal {
         use Literal::{Float, Integer, LiteralList, Str};
 
         match (self, rhs) {
-            (Integer(lhs), Integer(rhs)) => Some(Integer(rug(lhs + rhs))),
-            (Float(lhs), Float(rhs)) => Some(Float(rug(lhs + rhs))),
+            (Integer(lhs), Integer(rhs)) => Some(Integer(alloc_num(lhs + rhs))),
+            (Float(lhs), Float(rhs)) => Some(Float(alloc_num(lhs + rhs))),
             (Str(lhs), Str(rhs)) => Some(Str(Rc::new(format!("{}{}", lhs, rhs)))),
             (LiteralList(lhs), LiteralList(rhs)) => {
                 Some(LiteralList([lhs.clone(), rhs.clone()].concat()))
@@ -41,8 +42,8 @@ impl Sub for &Literal {
         use Literal::{Float, Integer};
 
         match (self, rhs) {
-            (Integer(lhs), Integer(rhs)) => Some(Integer(rug(lhs - rhs))),
-            (Float(lhs), Float(rhs)) => Some(Float(rug(lhs - rhs))),
+            (Integer(lhs), Integer(rhs)) => Some(Integer(alloc_num(lhs - rhs))),
+            (Float(lhs), Float(rhs)) => Some(Float(alloc_num(lhs - rhs))),
             _ => None,
         }
     }
@@ -55,8 +56,8 @@ impl Mul for &Literal {
         use Literal::{Float, Integer};
 
         match (self, rhs) {
-            (Integer(lhs), Integer(rhs)) => Some(Integer(rug(lhs * rhs))),
-            (Float(lhs), Float(rhs)) => Some(Float(rug(lhs * rhs))),
+            (Integer(lhs), Integer(rhs)) => Some(Integer(alloc_num(lhs * rhs))),
+            (Float(lhs), Float(rhs)) => Some(Float(alloc_num(lhs * rhs))),
             _ => None,
         }
     }
@@ -69,8 +70,8 @@ impl Div for &Literal {
         use Literal::{Float, Integer};
 
         match (self, rhs) {
-            (Integer(lhs), Integer(rhs)) => Some(Float(rug(lhs / rhs))),
-            (Float(lhs), Float(rhs)) => Some(Float(rug(lhs / rhs))),
+            (Integer(lhs), Integer(rhs)) => Some(Float(alloc_num(lhs / rhs))),
+            (Float(lhs), Float(rhs)) => Some(Float(alloc_num(lhs / rhs))),
             _ => None,
         }
     }
@@ -83,8 +84,8 @@ impl Rem for &Literal {
         use Literal::{Float, Integer};
 
         match (self, rhs) {
-            (Integer(lhs), Integer(rhs)) => Some(Integer(rug(lhs % rhs))),
-            (Float(lhs), Float(rhs)) => Some(Float(rug(lhs % rhs))),
+            (Integer(lhs), Integer(rhs)) => Some(Integer(alloc_num(lhs % rhs))),
+            (Float(lhs), Float(rhs)) => Some(Float(alloc_num(lhs % rhs))),
             _ => None,
         }
     }
@@ -120,9 +121,10 @@ impl BitOr for &Literal {
 
 impl PartialEq for Literal {
     fn eq(&self, other: &Self) -> bool {
+        use core::cmp::Ordering;
         use Literal::*;
 
-        // The comparision for lists and maps is might seem uneffective, due to it done in O(n)
+        // The comparision for lists and maps is might seem uneffective, due to it's done in O(n)
         // But they are just literals, so I don't expect them to be too large
         match (self, other) {
             (Integer(lhs), Integer(rhs)) => lhs == rhs,
@@ -136,6 +138,44 @@ impl PartialEq for Literal {
                 lhs.len() == rhs.len() && lhs.iter().eq(rhs.iter())
             }
             _ => false,
+        }
+    }
+}
+
+impl Eq for Literal {}
+
+impl std::hash::Hash for Literal {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        use Literal::*;
+        discriminant(self).hash(state);
+
+        match self {
+            Integer(num) | Float(num) => {
+                if num.is_nan() {
+                    0u8.hash(state);
+                    return;
+                }
+
+                if num.is_zero() {
+                    1u8.hash(state);
+                    return;
+                }
+
+                if num.is_infinite() {
+                    2u8.hash(state);
+                    return;
+                }
+
+                let (mantissa, exp) = num.to_integer_exp().unwrap();
+
+                3u8.hash(state);
+                exp.hash(state);
+                mantissa.hash(state);
+            }
+            Boolean(bool) => bool.hash(state),
+            Char(char) => char.hash(state),
+            Str(str) => str.hash(state),
+            LiteralList(expr_list) | LiteralArray(expr_list) => expr_list.hash(state),
         }
     }
 }
@@ -160,8 +200,8 @@ impl Neg for &Literal {
         use Literal::{Float, Integer};
 
         match self {
-            Integer(i) => Some(Integer(rug(-i))),
-            Float(f) => Some(Float(rug(-f))),
+            Integer(i) => Some(Integer(alloc_num(-i))),
+            Float(f) => Some(Float(alloc_num(-f))),
             _ => None,
         }
     }
@@ -251,7 +291,7 @@ impl Literal {
     }
 }
 
-fn rug<T>(value: T) -> RugFloat
+fn alloc_num<T>(value: T) -> RugFloat
 where
     RugFloat: rug::Assign<T>,
 {

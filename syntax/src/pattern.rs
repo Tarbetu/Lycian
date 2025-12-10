@@ -1,7 +1,7 @@
 use crate::Expression;
 use std::rc::Rc;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct Pattern {
     pub name: PatternName,
     pub value: Expression,

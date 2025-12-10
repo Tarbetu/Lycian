@@ -9,7 +9,7 @@ use std::fmt::Display;
 pub struct TypeId(pub usize);
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
-pub enum Hint {
+pub enum Constraint {
     Numeric,
     Addable,
     Integer,
@@ -39,12 +39,14 @@ pub enum IntegerNumber {
     UInt64,
     UInt128,
     UIntSize,
+    Literal,
 }
 
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub enum FloatingNumber {
     Float32,
     Float64,
+    Literal
 }
 #[derive(Debug, PartialEq, Copy, Clone)]
 
@@ -54,6 +56,8 @@ pub enum PrimitiveType {
     Boolean,
     Char,
     Void,
+    LiteralTrue,
+    LiteralFalse
 }
 
 #[derive(Debug, PartialEq, Copy, Clone)]

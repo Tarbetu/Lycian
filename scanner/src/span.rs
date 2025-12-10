@@ -1,7 +1,7 @@
 use crate::Scanner;
 use std::{fmt::Display, rc::Rc};
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, Hash)]
 pub struct Span {
     pub file: Rc<String>,
     pub line: usize,

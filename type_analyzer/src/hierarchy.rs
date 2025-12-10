@@ -14,7 +14,8 @@ pub struct Hierarchy<'a> {
     pub variants_of_origin: HashMap<TypeId, HashMap<Rc<String>, TypeId>>,
     pub expr_to_type: ExprToTypeTable,
     pub binding_to_type: HashMap<scope::BindingId, TypeId>,
-    pub expr_constraints: HashMap<scope::ExprId, HashSet<Hint>>,
+    pub literal_types: LiteralTypeTable,
+    pub expr_constraints: HashMap<scope::ExprId, HashSet<Constraint>>,
     pub embedded_types: &'static EmbeddedTypes,
     pub type_instances: HashMap<TypeId, Vec<TypeId>>,
     pub scope_hierarchy: scope::Hierarchy<'a>,
@@ -29,6 +30,16 @@ pub struct ExprToTypeTable {
     pub deferred: HashSet<ExprId>,
 }
 
+#[derive(Default)]
+pub struct LiteralTypeTable {
+    pub integers: HashMap<syntax::Literal, TypeId>,
+    pub floats: HashMap<syntax::Literal, TypeId>,
+    pub chars: HashMap<syntax::Literal, TypeId>,
+    pub strings: HashMap<syntax::Literal, TypeId>,
+    pub lists: HashMap<syntax::Literal, TypeId>,
+    pub arrays: HashMap<syntax::Literal, TypeId>,
+}
+
 impl<'a> Hierarchy<'a> {
     pub(crate) fn new(scope_hierarchy: scope::Hierarchy<'a>) -> TypeResult<Self> {
         Self {
@@ -37,6 +48,7 @@ impl<'a> Hierarchy<'a> {
             name_to_origin_id: HashMap::new(),
             variants_of_origin: HashMap::new(),
             expr_to_type: ExprToTypeTable::default(),
+            literal_types: LiteralTypeTable::default(),
             expr_constraints: HashMap::new(),
             embedded_types: &EMBEDDED_TYPES,
             type_instances: HashMap::new(),
@@ -249,16 +261,36 @@ impl<'a> Hierarchy<'a> {
                 EMBEDDED_TYPES.literal_integer,
                 TypeDefinition::EmbeddedType {
                     id: EMBEDDED_TYPES.literal_integer,
-                    name: EmbeddedTypeName::Function,
+                    name: EmbeddedTypeName::Primitive(PrimitiveType::Integer(
+                        IntegerNumber::Literal,
+                    )),
                     size: TypeSize::Exact(4),
                 },
             ),
             (
-                EMBEDDED_TYPES.literal_integer,
+                EMBEDDED_TYPES.literal_float,
                 TypeDefinition::EmbeddedType {
                     id: EMBEDDED_TYPES.literal_float,
-                    name: EmbeddedTypeName::Function,
+                    name: EmbeddedTypeName::Primitive(PrimitiveType::Floating(
+                        FloatingNumber::Literal,
+                    )),
                     size: TypeSize::Exact(8),
+                },
+            ),
+            (
+                EMBEDDED_TYPES.literal_true,
+                TypeDefinition::EmbeddedType {
+                    id: EMBEDDED_TYPES.literal_true,
+                    name: EmbeddedTypeName::Primitive(PrimitiveType::LiteralTrue),
+                    size: TypeSize::Exact(1),
+                },
+            ),
+            (
+                EMBEDDED_TYPES.literal_false,
+                TypeDefinition::EmbeddedType {
+                    id: EMBEDDED_TYPES.literal_false,
+                    name: EmbeddedTypeName::Primitive(PrimitiveType::LiteralFalse),
+                    size: TypeSize::Exact(1),
                 },
             ),
         ]);

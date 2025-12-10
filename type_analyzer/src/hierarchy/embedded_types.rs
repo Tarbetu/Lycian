@@ -27,6 +27,8 @@ pub struct EmbeddedTypes {
     pub function: TypeId,
     pub literal_integer: TypeId,
     pub literal_float: TypeId,
+    pub literal_true: TypeId,
+    pub literal_false: TypeId,
 }
 
 impl EmbeddedTypes {
@@ -72,4 +74,6 @@ pub const EMBEDDED_TYPES: EmbeddedTypes = EmbeddedTypes {
     function: TypeId(21),
     literal_integer: TypeId(22),
     literal_float: TypeId(23),
+    literal_true: TypeId(24),
+    literal_false: TypeId(25),
 };
