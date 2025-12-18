@@ -1,5 +1,6 @@
 use crate::{Expression, ExpressionKind};
 pub use rug::Float as RugFloat;
+use std::collections::LinkedList;
 use std::mem::discriminant;
 use std::ops::*;
 use std::rc::Rc;
@@ -13,7 +14,7 @@ pub enum Literal {
     Boolean(bool),
     Char(u32),
     Str(Rc<String>),
-    LiteralList(Vec<Expression>),
+    LiteralList(LinkedList<Expression>),
     LiteralArray(Vec<Expression>),
 }
 
@@ -21,14 +22,19 @@ impl Add for &Literal {
     type Output = Option<Literal>;
 
     fn add(self, rhs: Self) -> Self::Output {
-        use Literal::{Float, Integer, LiteralList, Str};
+        use Literal::{Float, Integer, LiteralArray, LiteralList, Str};
 
         match (self, rhs) {
             (Integer(lhs), Integer(rhs)) => Some(Integer(alloc_num(lhs + rhs))),
             (Float(lhs), Float(rhs)) => Some(Float(alloc_num(lhs + rhs))),
             (Str(lhs), Str(rhs)) => Some(Str(Rc::new(format!("{}{}", lhs, rhs)))),
+            (LiteralArray(lhs), LiteralArray(rhs)) => {
+                Some(LiteralArray([lhs.clone(), rhs.clone()].concat()))
+            }
             (LiteralList(lhs), LiteralList(rhs)) => {
-                Some(LiteralList([lhs.clone(), rhs.clone()].concat()))
+                let mut result = lhs.clone();
+                result.append(&mut rhs.clone());
+                Some(LiteralList(result))
             }
             _ => None,
         }
@@ -121,7 +127,6 @@ impl BitOr for &Literal {
 
 impl PartialEq for Literal {
     fn eq(&self, other: &Self) -> bool {
-        use core::cmp::Ordering;
         use Literal::*;
 
         // The comparision for lists and maps is might seem uneffective, due to it's done in O(n)
@@ -175,7 +180,8 @@ impl std::hash::Hash for Literal {
             Boolean(bool) => bool.hash(state),
             Char(char) => char.hash(state),
             Str(str) => str.hash(state),
-            LiteralList(expr_list) | LiteralArray(expr_list) => expr_list.hash(state),
+            LiteralList(expr_list) => expr_list.hash(state),
+            LiteralArray(expr_list) => expr_list.hash(state),
         }
     }
 }
@@ -230,7 +236,14 @@ impl Literal {
         use Literal::{Boolean, LiteralArray, LiteralList};
 
         match (self, rhs) {
-            (lhs, LiteralList(rhs) | LiteralArray(rhs)) => Some(Boolean(rhs.iter().any(|i| {
+            (lhs, LiteralList(rhs)) => Some(Boolean(rhs.iter().any(|i| {
+                if let ExpressionKind::Literal(i) = i.kind.as_ref() {
+                    i.as_ref() == lhs
+                } else {
+                    false
+                }
+            }))),
+            (lhs, LiteralArray(rhs)) => Some(Boolean(rhs.iter().any(|i| {
                 if let ExpressionKind::Literal(i) = i.kind.as_ref() {
                     i.as_ref() == lhs
                 } else {
@@ -282,7 +295,11 @@ impl Literal {
         use Literal::{Integer, LiteralArray, LiteralList};
 
         match (self, key) {
-            (LiteralList(list) | LiteralArray(list), Integer(num)) => num
+            (LiteralList(list), Integer(num)) => num
+                .to_integer()
+                .and_then(|int| int.to_usize())
+                .and_then(|index| list.iter().nth(index).cloned()),
+            (LiteralArray(list), Integer(num)) => num
                 .to_integer()
                 .and_then(|int| int.to_usize())
                 .and_then(|index| list.get(index).cloned()),

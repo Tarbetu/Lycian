@@ -53,6 +53,7 @@ impl<'a> Hierarchy<'a> {
     pub(crate) fn build(mut self, classes: &'a [syntax::Class]) -> ScopeResult<Self> {
         let mut root = self.scopes.remove(&ROOT_ID).unwrap();
 
+        let mut root_children_ids = Vec::new();
         for class in classes {
             let class_scope_id = self.next_scope_id();
 
@@ -66,7 +67,7 @@ impl<'a> Hierarchy<'a> {
                 },
             );
 
-            root.children_ids.push(class_scope_id);
+            root_children_ids.push(class_scope_id);
 
             let binding_id = self.next_binding_id();
 
@@ -93,6 +94,7 @@ impl<'a> Hierarchy<'a> {
                 .insert(class.name.clone(), class_scope_id);
         }
 
+        root.children_ids = Rc::new(root_children_ids);
         self.scopes.insert(ROOT_ID, root);
         Ok(self)
     }
@@ -104,6 +106,7 @@ impl<'a> Hierarchy<'a> {
         class_scope_id: ScopeId,
     ) -> ScopeResult<()> {
         let mut constructor_names = HashSet::new();
+
         for constructor in constructors {
             let node = SyntaxNode::Constructor(class, constructor);
 
@@ -142,7 +145,7 @@ impl<'a> Hierarchy<'a> {
                 .bindings
                 .insert(syntax::PatternName::Name(constructor.0.clone()), binding_id);
 
-            self.push_children(class_scope_id, constructor_scope_id);
+            self.push_child(class_scope_id, constructor_scope_id);
         }
 
         Ok(())
@@ -173,7 +176,7 @@ impl<'a> Hierarchy<'a> {
                     },
                 );
 
-                self.push_children(class_scope_id, overload_id);
+                self.push_child(class_scope_id, overload_id);
             }
 
             let binding_id = self.next_binding_id();
@@ -237,7 +240,7 @@ impl<'a> Hierarchy<'a> {
                     },
                 );
 
-                self.push_children(parent_id, function_id);
+                self.push_child(parent_id, function_id);
                 self.build_patterns(&function.params, parent_id)?;
                 self.build_expression(&function.body, function_id)?;
 
@@ -282,7 +285,7 @@ impl<'a> Hierarchy<'a> {
                 self.expr_to_scope_id
                     .insert(ExprId(expression.id), block_id);
 
-                self.push_children(parent_id, block_id);
+                self.push_child(parent_id, block_id);
 
                 self.build_patterns(params, block_id)?;
                 for expression in expressions {
@@ -372,12 +375,10 @@ impl<'a> Hierarchy<'a> {
         self.expr_to_scope_id.insert(ExprId(expr_id), scope_id);
     }
 
-    fn push_children(&mut self, parent_id: ScopeId, children_id: ScopeId) {
-        self.scopes
-            .get_mut(&parent_id)
-            .unwrap()
-            .children_ids
-            .push(children_id);
+    fn push_child(&mut self, parent_id: ScopeId, child_id: ScopeId) {
+        Rc::get_mut(&mut self.scopes.get_mut(&parent_id).unwrap().children_ids)
+            .expect("No clone expected!")
+            .push(child_id)
     }
 
     fn next_scope_id(&self) -> ScopeId {

@@ -1,33 +1,30 @@
 mod embedded_types;
+mod type_bounds;
+mod type_union;
 
 use crate::definition::*;
 use crate::error::{TypeError, TypeErrorKind, TypeResult};
 pub use embedded_types::*;
-use scope::ExprId;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
+use type_bounds::*;
+use type_union::TypeUnion;
 
 pub struct Hierarchy<'a> {
     pub types: HashMap<TypeId, TypeDefinition<'a>>,
     last_id: TypeId,
     pub name_to_origin_id: HashMap<Rc<String>, TypeId>,
     pub variants_of_origin: HashMap<TypeId, HashMap<Rc<String>, TypeId>>,
-    pub expr_to_type: ExprToTypeTable,
+    pub expr_to_type: TypeUnion,
     pub binding_to_type: HashMap<scope::BindingId, TypeId>,
     pub literal_types: LiteralTypeTable,
-    pub expr_constraints: HashMap<scope::ExprId, HashSet<Constraint>>,
     pub embedded_types: &'static EmbeddedTypes,
-    pub type_instances: HashMap<TypeId, Vec<TypeId>>,
+    // Type Instances might be confusing
+    // It's GenericType -> (TypeArgs, TypeInstanceId)
+    pub type_instances: HashMap<TypeId, HashMap<Rc<Vec<TypeId>>, TypeId>>,
     pub scope_hierarchy: scope::Hierarchy<'a>,
     pub responds_to_table: HashMap<Rc<String>, TypeId>,
     pub call_table: HashMap<scope::ExprId, (scope::BindingId, TypeId)>,
-}
-
-#[derive(Default)]
-pub struct ExprToTypeTable {
-    pub ok: HashMap<ExprId, TypeId>,
-    pub err: HashMap<ExprId, TypeError>,
-    pub deferred: HashSet<ExprId>,
 }
 
 #[derive(Default)]
@@ -47,9 +44,8 @@ impl<'a> Hierarchy<'a> {
             last_id: TypeId(24),
             name_to_origin_id: HashMap::new(),
             variants_of_origin: HashMap::new(),
-            expr_to_type: ExprToTypeTable::default(),
+            expr_to_type: TypeUnion::default(),
             literal_types: LiteralTypeTable::default(),
-            expr_constraints: HashMap::new(),
             embedded_types: &EMBEDDED_TYPES,
             type_instances: HashMap::new(),
             scope_hierarchy,
@@ -65,6 +61,39 @@ impl<'a> Hierarchy<'a> {
         let result = self.last_id;
         self.last_id = TypeId(self.last_id.0 + 1);
         result
+    }
+
+    pub(crate) fn get_type_instance(&mut self, origin_id: TypeId, args: &Vec<TypeId>) -> TypeId {
+        if let Some(type_instances) = self.type_instances.get(&origin_id) {
+            if let Some(type_instance_id) = type_instances.get(args) {
+                return *type_instance_id;
+            }
+        }
+
+        self.push_type_instance(origin_id, args.to_vec())
+    }
+
+    pub(crate) fn push_type_instance(&mut self, origin_id: TypeId, args: Vec<TypeId>) -> TypeId {
+        let id = self.next_id();
+        let args = Rc::new(args);
+        let type_def = TypeDefinition::TypeInstance {
+            id,
+            origin_id,
+            args,
+        };
+
+        self.types.insert(id, type_def);
+
+        let type_def = self.types.get(&id).expect("Origin type expected!");
+
+        let type_instances = self
+            .type_instances
+            .entry(origin_id)
+            .or_insert_with(HashMap::new);
+
+        type_instances.insert(type_def.type_args().clone(), type_def.id());
+
+        id
     }
 
     fn install_embedded_types(mut self) -> Self {
@@ -291,6 +320,22 @@ impl<'a> Hierarchy<'a> {
                     id: EMBEDDED_TYPES.literal_false,
                     name: EmbeddedTypeName::Primitive(PrimitiveType::LiteralFalse),
                     size: TypeSize::Exact(1),
+                },
+            ),
+            (
+                EMBEDDED_TYPES.literal_empty_list,
+                TypeDefinition::EmbeddedType {
+                    id: EMBEDDED_TYPES.literal_empty_list,
+                    name: EmbeddedTypeName::Compound(CompoundType::EmptyList),
+                    size: TypeSize::Exact(0),
+                },
+            ),
+            (
+                EMBEDDED_TYPES.literal_empty_array,
+                TypeDefinition::EmbeddedType {
+                    id: EMBEDDED_TYPES.literal_empty_array,
+                    name: EmbeddedTypeName::Compound(CompoundType::EmptyArray),
+                    size: TypeSize::Exact(0),
                 },
             ),
         ]);

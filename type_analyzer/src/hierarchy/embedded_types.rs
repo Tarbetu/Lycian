@@ -29,6 +29,8 @@ pub struct EmbeddedTypes {
     pub literal_float: TypeId,
     pub literal_true: TypeId,
     pub literal_false: TypeId,
+    pub literal_empty_list: TypeId,
+    pub literal_empty_array: TypeId,
 }
 
 impl EmbeddedTypes {
@@ -42,10 +44,6 @@ impl EmbeddedTypes {
 
     pub fn is_number(&self, type_id: TypeId) -> bool {
         self.is_integer(type_id) || self.is_float(type_id)
-    }
-
-    pub fn is_literal_number(&self, type_id: TypeId) -> bool {
-        type_id == self.literal_integer || type_id == self.literal_float
     }
 }
 
@@ -76,4 +74,6 @@ pub const EMBEDDED_TYPES: EmbeddedTypes = EmbeddedTypes {
     literal_float: TypeId(23),
     literal_true: TypeId(24),
     literal_false: TypeId(25),
+    literal_empty_list: TypeId(26),
+    literal_empty_array: TypeId(27),
 };

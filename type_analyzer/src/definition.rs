@@ -8,23 +8,6 @@ use std::fmt::Display;
 #[derive(Synonym)]
 pub struct TypeId(pub usize);
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone)]
-pub enum Constraint {
-    Numeric,
-    Addable,
-    Integer,
-    Floating,
-    Callable,
-    Indexable,
-    AcceptsBlock,
-    ResultOf(scope::BindingId),
-    RespondsTo(syntax::PatternName),
-    SuperCall(syntax::PatternName),
-    SameAs(scope::ExprId),
-    AnyOfTypeRefs(Rc<Vec<scope::ExprId>>),
-    TypeRef,
-}
-
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub enum IntegerNumber {
     Int8,
@@ -64,6 +47,8 @@ pub enum PrimitiveType {
 pub enum CompoundType {
     Array,
     LinkedList,
+    EmptyArray,
+    EmptyList,
     String,
 }
 
@@ -137,7 +122,7 @@ pub enum TypeDefinition<'a> {
     TypeInstance {
         id: TypeId,
         origin_id: TypeId,
-        args: Vec<(TypeId, &'a syntax::Expression)>,
+        args: Rc<Vec<TypeId>>,
     },
 }
 
@@ -167,6 +152,15 @@ impl<'a> TypeDefinition<'a> {
             Variant { id, .. } => *id,
             Function { id, .. } => *id,
             TypeInstance { id, .. } => *id,
+        }
+    }
+
+    pub fn type_args(&'a self) -> &Rc<Vec<TypeId>> {
+        use TypeDefinition::*;
+
+        match self {
+            TypeInstance { args, .. } => args,
+            _ => panic!("Type does not have type arguments"),
         }
     }
 
@@ -295,22 +289,22 @@ impl<'a> TypeDefinition<'a> {
 
         // Parametric contravarience
         if let (
-            TypeDefinition::TypeInstance {
-                origin_id: super_origin_id,
-                args: super_args,
-                ..
-            }
-            | TypeDefinition::Function {
+            // TypeDefinition::TypeInstance {
+            //     origin_id: super_origin_id,
+            //     args: super_args,
+            //     ..
+            // } |
+            TypeDefinition::Function {
                 origin_id: super_origin_id,
                 args: super_args,
                 ..
             },
-            TypeDefinition::TypeInstance {
-                origin_id: sub_origin_id,
-                args: sub_args,
-                ..
-            }
-            | TypeDefinition::Function {
+            // TypeDefinition::TypeInstance {
+            //     origin_id: sub_origin_id,
+            //     args: sub_args,
+            //     ..
+            // } |
+            TypeDefinition::Function {
                 origin_id: sub_origin_id,
                 args: sub_args,
                 ..
@@ -322,6 +316,38 @@ impl<'a> TypeDefinition<'a> {
                 || (super_args.len() >= sub_args.len()
                     && super_args.iter().zip(sub_args.iter()).all(
                         |((super_type_id, _super_arg), (sub_type_id, _sub_arg))| {
+                            visited.insert((*super_type_id, *sub_type_id));
+                            let super_type = hierarchy.types.get(super_type_id).unwrap();
+                            let sub_type = hierarchy.types.get(sub_type_id).unwrap();
+                            let result =
+                                Self::check_supertype(super_type, sub_type, hierarchy, visited);
+                            visited.remove(&(*super_type_id, *sub_type_id));
+                            result
+                        },
+                    )))
+        {
+            return true;
+        }
+
+        // TODO: Eliminate the repetition
+        if let (
+            TypeDefinition::TypeInstance {
+                origin_id: super_origin_id,
+                args: super_args,
+                ..
+            },
+            TypeDefinition::TypeInstance {
+                origin_id: sub_origin_id,
+                args: sub_args,
+                ..
+            }
+                ) = (super_type, sub_type)
+            && discriminant(super_type) == discriminant(sub_type)
+            && super_origin_id == sub_origin_id
+            && (super_args.starts_with(sub_args)
+                || (super_args.len() >= sub_args.len()
+                    && super_args.iter().zip(sub_args.iter()).all(
+                        |(super_type_id, sub_type_id)| {
                             visited.insert((*super_type_id, *sub_type_id));
                             let super_type = hierarchy.types.get(super_type_id).unwrap();
                             let sub_type = hierarchy.types.get(sub_type_id).unwrap();

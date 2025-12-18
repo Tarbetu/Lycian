@@ -8,7 +8,7 @@ pub struct Scope<'a> {
     pub id: ScopeId,
     pub parent_id: ScopeId,
     pub node: SyntaxNode<'a>,
-    pub children_ids: Vec<ScopeId>,
+    pub children_ids: Rc<Vec<ScopeId>>,
     pub bindings: HashMap<PatternName, BindingId>,
     pub resolved_references: HashMap<PatternName, (BindingId, ResolvedReferenceStatus)>,
 }
@@ -27,7 +27,7 @@ impl<'a> Scope<'a> {
             id: ScopeId(0),
             parent_id: ScopeId(0),
             node: SyntaxNode::Root,
-            children_ids: Vec::new(),
+            children_ids: Rc::new(Vec::new()),
             bindings: HashMap::new(),
             resolved_references: HashMap::new(),
         }

@@ -3,12 +3,18 @@ use crate::error::{ScopeError, ScopeErrorKind};
 use crate::hierarchy::ROOT_ID;
 use crate::scope::ResolvedReferenceStatus;
 use crate::{ExprId, Hierarchy, Scope, ScopeId, ScopeResult, SyntaxNode};
-use std::mem;
 use std::rc::Rc;
 
 pub fn resolve(mut hierarchy: Hierarchy) -> ScopeResult<Hierarchy> {
-    let children_ids = mem::take(&mut hierarchy.scopes.get_mut(&ROOT_ID).unwrap().children_ids);
-    for class_id in children_ids {
+    for class_id in hierarchy
+        .scopes
+        .get_mut(&ROOT_ID)
+        .unwrap()
+        .children_ids
+        .clone()
+        .iter()
+        .copied()
+    {
         resolve_class(&mut hierarchy, class_id)?
     }
 
@@ -16,15 +22,15 @@ pub fn resolve(mut hierarchy: Hierarchy) -> ScopeResult<Hierarchy> {
 }
 
 fn resolve_class(hierarchy: &mut Hierarchy, scope_id: ScopeId) -> ScopeResult<()> {
-    hierarchy
+    for declaration_id in hierarchy
         .scopes
-        .get_mut(&ROOT_ID)
+        .get_mut(&scope_id)
         .unwrap()
         .children_ids
-        .push(scope_id);
-    let children_ids = mem::take(&mut hierarchy.scopes.get_mut(&scope_id).unwrap().children_ids);
-
-    for declaration_id in children_ids {
+        .clone()
+        .iter()
+        .copied()
+    {
         let declaration_scope = hierarchy.scopes.get(&declaration_id).unwrap();
 
         match declaration_scope.node {
@@ -44,13 +50,6 @@ fn resolve_constructor(
     parent_id: ScopeId,
     declaration_id: ScopeId,
 ) -> ScopeResult<()> {
-    hierarchy
-        .scopes
-        .get_mut(&parent_id)
-        .unwrap()
-        .children_ids
-        .push(declaration_id);
-
     let SyntaxNode::Constructor(_, (_, patterns)) =
         hierarchy.scopes.get(&declaration_id).unwrap().node
     else {

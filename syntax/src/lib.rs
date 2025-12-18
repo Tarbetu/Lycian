@@ -21,6 +21,7 @@ pub use error::ParserResult;
 
 pub use operator::Operator;
 use scanner::{Span, Token, TokenType};
+use std::collections::LinkedList;
 
 use ahash::AHashMap;
 use scopeguard::guard;
@@ -760,16 +761,17 @@ impl Parser {
             if self.is_match(&[BracketClose]) {
                 Ok(Expression {
                     kind: Box::new(ExpressionKind::Literal(Rc::new(Literal::LiteralList(
-                        vec![],
+                        LinkedList::new(),
                     )))),
                     id: self.next_id(),
                     span: self.previous().span,
                 })
             } else {
-                let mut list = vec![self.expression()?];
+                let mut list = LinkedList::new();
+                list.push_back(self.expression()?);
 
                 while self.is_match(&[Comma]) {
-                    list.push(self.expression()?);
+                    list.push_back(self.expression()?);
                 }
 
                 self.consume(BracketClose, "End of List")?;

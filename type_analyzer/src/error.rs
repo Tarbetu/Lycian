@@ -25,6 +25,7 @@ pub enum TypeErrorKind {
     NotABoolean,
     DivisionByZero,
     CyclicDependency,
+    Multiple(Vec<TypeError>),
 }
 
 impl fmt::Display for TypeErrorKind {
@@ -41,6 +42,14 @@ impl fmt::Display for TypeErrorKind {
             TypeErrorKind::NotABoolean => write!(f, "Not a boolean"),
             TypeErrorKind::DivisionByZero => write!(f, "Division by zero"),
             TypeErrorKind::CyclicDependency => write!(f, "Cyclic Dependency"),
+            TypeErrorKind::Multiple(errors) => {
+                writeln!(f, "Multiple type errors:")?;
+                for error in errors {
+                    writeln!(f, "{}", error)?
+                }
+
+                Ok(())
+            }
         }
     }
 }

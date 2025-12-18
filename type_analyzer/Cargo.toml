@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 scope = { path = "../scope" }
-synonym = "0.1.6"
 syntax = { path = "../syntax" }
 scanner = { path = "../scanner" }
+synonym = "0.1.6"
+bidirectional-map = "0.1.4"
