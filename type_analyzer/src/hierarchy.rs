@@ -1,24 +1,19 @@
 mod embedded_types;
-mod type_bounds;
-mod type_union;
 
 use crate::definition::*;
-use crate::error::{TypeError, TypeErrorKind, TypeResult};
 pub use embedded_types::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::rc::Rc;
-use type_bounds::*;
-use type_union::TypeUnion;
 
 pub struct Hierarchy<'a> {
     pub types: HashMap<TypeId, TypeDefinition<'a>>,
     last_id: TypeId,
     pub name_to_origin_id: HashMap<Rc<String>, TypeId>,
     pub variants_of_origin: HashMap<TypeId, HashMap<Rc<String>, TypeId>>,
-    pub expr_to_type: TypeUnion,
     pub binding_to_type: HashMap<scope::BindingId, TypeId>,
     pub literal_types: LiteralTypeTable,
     pub embedded_types: &'static EmbeddedTypes,
+    pub ancestors: HashMap<TypeId, Vec<TypeId>>,
     // Type Instances might be confusing
     // It's GenericType -> (TypeArgs, TypeInstanceId)
     pub type_instances: HashMap<TypeId, HashMap<Rc<Vec<TypeId>>, TypeId>>,
@@ -38,13 +33,12 @@ pub struct LiteralTypeTable {
 }
 
 impl<'a> Hierarchy<'a> {
-    pub(crate) fn new(scope_hierarchy: scope::Hierarchy<'a>) -> TypeResult<Self> {
+    pub(crate) fn new(scope_hierarchy: scope::Hierarchy<'a>) -> Self {
         Self {
             types: HashMap::new(),
             last_id: TypeId(24),
             name_to_origin_id: HashMap::new(),
             variants_of_origin: HashMap::new(),
-            expr_to_type: TypeUnion::default(),
             literal_types: LiteralTypeTable::default(),
             embedded_types: &EMBEDDED_TYPES,
             type_instances: HashMap::new(),
@@ -52,6 +46,7 @@ impl<'a> Hierarchy<'a> {
             responds_to_table: HashMap::new(),
             binding_to_type: HashMap::new(),
             call_table: HashMap::new(),
+            ancestors: HashMap::new(),
         }
         .install_embedded_types()
         .install_custom_types()
@@ -343,20 +338,7 @@ impl<'a> Hierarchy<'a> {
         self
     }
 
-    fn install_custom_types(mut self) -> TypeResult<Self> {
-        let scopes_buffer: HashMap<_, _> = self
-            .scope_hierarchy
-            .scopes
-            .iter()
-            .map(|(_class_scope_id, class_scope)| {
-                let scope::SyntaxNode::Class(syntax::Class { name, .. }) = class_scope.node else {
-                    panic!("Class expected for root scope");
-                };
-
-                (name.clone(), class_scope)
-            })
-            .collect();
-
+    fn install_custom_types(mut self) -> Self {
         for (_class_scope_id, class_scope) in self.scope_hierarchy.scopes.iter() {
             let class_type_id = self.last_id;
             self.last_id.0 += 1;
@@ -367,9 +349,6 @@ impl<'a> Hierarchy<'a> {
 
             self.name_to_origin_id
                 .insert(class.name.clone(), class_type_id);
-
-            let constructors = self.constructors(class, &scopes_buffer)?;
-            let static_methods = self.static_methods(class, &scopes_buffer)?;
 
             self.types.insert(
                 class_type_id,
@@ -382,11 +361,8 @@ impl<'a> Hierarchy<'a> {
                         .copied()
                         .unwrap(),
                     name: class.name.clone(),
-                    parent_ids: HashMap::new(), // This will handled by inheritence analysis
                     size: TypeSize::UnionSize,
-                    node: Some(class),
-                    constructors,
-                    static_methods,
+                    node: class,
                 },
             );
 
@@ -396,9 +372,6 @@ impl<'a> Hierarchy<'a> {
                 self.last_id.0 += 1;
 
                 variants.insert(constructor_name.clone(), variant_id);
-
-                let instance_methods =
-                    self.instance_methods(constructor_name.as_str(), class, &scopes_buffer)?;
 
                 self.types.insert(
                     variant_id,
@@ -412,7 +385,6 @@ impl<'a> Hierarchy<'a> {
                         name: constructor_name.clone(),
                         origin_id: class_type_id,
                         node: patterns,
-                        instance_methods,
                     },
                 );
             }
@@ -420,235 +392,34 @@ impl<'a> Hierarchy<'a> {
             self.variants_of_origin.insert(class_type_id, variants);
         }
 
-        Ok(self)
+        self.build_ancestors_map();
+
+        self
     }
 
-    fn constructors<'m>(
-        &self,
-        class: &'m syntax::Class,
-        scopes_buffer: &'m HashMap<Rc<String>, &scope::Scope<'_>>,
-    ) -> TypeResult<HashSet<(Rc<String>, scope::BindingId)>> {
-        self.build_constructors(class, scopes_buffer, &mut HashSet::new())
-    }
-
-    fn build_constructors<'m>(
-        &self,
-        class: &'m syntax::Class,
-        scopes_buffer: &'m HashMap<Rc<String>, &scope::Scope<'_>>,
-        visited: &mut HashSet<&'m str>,
-    ) -> TypeResult<HashSet<(Rc<String>, scope::BindingId)>> {
-        if visited.contains(class.name.as_str()) {
-            return Err(TypeError {
-                kind: TypeErrorKind::CyclicDependency,
-                message: "Mutual dependency detected!",
-                type_id: TypeId(0),
-                span: class.span.clone(),
-            });
-        }
-
-        visited.insert(&class.name);
-
-        let mut constructors = self.inherited_constructors(class, scopes_buffer, visited)?;
-
-        let class_scope = *scopes_buffer.get(&class.name).unwrap();
-
-        constructors.extend(
-            class
-                .constructors
-                .iter()
-                .map(|(constructor_name, _patterns)| {
-                    let (_name, binding_id) = class_scope
-                        .bindings
-                        .iter()
-                        .find(|(binding_name, _binding_id)| {
-                            binding_name.as_ref() == constructor_name.as_ref()
-                        })
-                        .unwrap();
-
-                    (class.name.clone(), *binding_id)
-                }),
-        );
-        Ok(constructors)
-    }
-
-    fn inherited_constructors<'m>(
-        &self,
-        class: &syntax::Class,
-        scopes_buffer: &'m HashMap<Rc<String>, &scope::Scope<'_>>,
-        visited: &mut HashSet<&'m str>,
-    ) -> TypeResult<HashSet<(Rc<String>, scope::BindingId)>> {
-        let mut methods = HashSet::new();
-
-        for ancestor_name in class.ancestors.iter() {
-            let ancestor_class_scope = scopes_buffer.get(ancestor_name).unwrap();
-
-            let scope::SyntaxNode::Class(ancestor_class) = &ancestor_class_scope.node else {
-                unreachable!()
+    fn build_ancestors_map(&mut self) {
+        for (_class_name, type_id) in self.name_to_origin_id.iter().skip(EMBEDDED_TYPES.count) {
+            let Some(type_def @ TypeDefinition::Origin { node: class, .. }) =
+                self.types.remove(type_id)
+            else {
+                unreachable!("Expected a class!")
             };
 
-            methods.extend(self.collect_static_methods(ancestor_class, scopes_buffer, visited)?);
+            self.ancestors.insert(
+                *type_id,
+                class
+                    .ancestors
+                    .iter()
+                    .map(|ancestor_name| {
+                        self.name_to_origin_id
+                            .get(ancestor_name)
+                            .copied()
+                            .expect("Name does not exist!")
+                    })
+                    .collect(),
+            );
+
+            self.types.insert(*type_id, type_def);
         }
-
-        Ok(methods)
-    }
-
-    fn static_methods<'m>(
-        &self,
-        class: &'m syntax::Class,
-        scopes_buffer: &'m HashMap<Rc<String>, &scope::Scope<'_>>,
-    ) -> TypeResult<HashSet<(Rc<String>, scope::BindingId)>> {
-        self.collect_static_methods(class, scopes_buffer, &mut HashSet::new())
-    }
-
-    fn collect_static_methods<'m>(
-        &self,
-        class: &'m syntax::Class,
-        scopes_buffer: &'m HashMap<Rc<String>, &scope::Scope<'_>>,
-        visited: &mut HashSet<&'m str>,
-    ) -> TypeResult<HashSet<(Rc<String>, scope::BindingId)>> {
-        if visited.contains(class.name.as_str()) {
-            return Err(TypeError {
-                kind: TypeErrorKind::CyclicDependency,
-                message: "Mutual dependency detected!",
-                type_id: TypeId(0),
-                span: class.span.clone(),
-            });
-        }
-
-        visited.insert(&class.name);
-
-        let mut methods = self.inherited_static_methods(class, scopes_buffer, visited)?;
-
-        let class_scope = scopes_buffer.get(&class.name).unwrap();
-
-        methods.extend(
-            class_scope
-                .bindings
-                .iter()
-                .filter_map(|(pattern_name, binding_id)| {
-                    let syntax::PatternName::Name(method_name) = pattern_name else {
-                        unreachable!()
-                    };
-
-                    class.methods.get(method_name)?.iter().find(|method| {
-                        method
-                            .params
-                            .first()
-                            .map(|param| param.name != syntax::PatternName::ClassSelf)
-                            .unwrap_or(true)
-                    })?;
-
-                    Some((class.name.clone(), *binding_id))
-                }),
-        );
-
-        Ok(methods)
-    }
-
-    fn inherited_static_methods<'m>(
-        &self,
-        class: &'m syntax::Class,
-        scopes_buffer: &'m HashMap<Rc<String>, &scope::Scope<'_>>,
-        visited: &mut HashSet<&'m str>,
-    ) -> TypeResult<HashSet<(Rc<String>, scope::BindingId)>> {
-        let mut methods = HashSet::new();
-
-        for ancestor_name in class.ancestors.iter() {
-            let ancestor_class_scope = scopes_buffer.get(ancestor_name).unwrap();
-
-            let scope::SyntaxNode::Class(ancestor_class) = &ancestor_class_scope.node else {
-                unreachable!()
-            };
-
-            methods.extend(self.collect_static_methods(ancestor_class, scopes_buffer, visited)?);
-        }
-
-        Ok(methods)
-    }
-
-    fn instance_methods(
-        &self,
-        constructor_name: &str,
-        class: &syntax::Class,
-        scopes_buffer: &HashMap<Rc<String>, &scope::Scope<'_>>,
-    ) -> TypeResult<HashSet<(Rc<String>, scope::BindingId)>> {
-        self.collect_instance_methods(constructor_name, class, scopes_buffer, &mut HashSet::new())
-    }
-
-    fn collect_instance_methods<'m>(
-        &self,
-        constructor_name: &str,
-        class: &'m syntax::Class,
-        scopes_buffer: &'m HashMap<Rc<String>, &scope::Scope<'_>>,
-        visited: &mut HashSet<&'m str>,
-    ) -> TypeResult<HashSet<(Rc<String>, scope::BindingId)>> {
-        if visited.contains(class.name.as_str()) {
-            return Err(TypeError {
-                kind: TypeErrorKind::CyclicDependency,
-                message: "Mutual dependency detected!",
-                type_id: TypeId(0),
-                span: class.span.clone(),
-            });
-        }
-
-        visited.insert(&class.name);
-
-        let mut methods = self.inherited_instance_methods(class, scopes_buffer, visited)?;
-
-        let class_scope = scopes_buffer.get(&class.name).unwrap();
-
-        methods.extend(
-            class_scope
-                .bindings
-                .iter()
-                .filter_map(|(pattern_name, binding_id)| {
-                    let syntax::PatternName::Name(method_name) = pattern_name else {
-                        unreachable!()
-                    };
-
-                    class.methods.get(method_name)?.iter().find(|method| {
-                        method
-                            .params
-                            .first()
-                            .map(|param| {
-                                param.name == syntax::PatternName::ClassSelf
-                                    || param.name.as_ref() == constructor_name
-                            })
-                            .unwrap_or(true)
-                    })?;
-
-                    Some((class.name.clone(), *binding_id))
-                }),
-        );
-
-        Ok(methods)
-    }
-
-    fn inherited_instance_methods<'m>(
-        &self,
-        class: &'m syntax::Class,
-        scopes_buffer: &'m HashMap<Rc<String>, &scope::Scope<'_>>,
-        visited: &mut HashSet<&'m str>,
-    ) -> TypeResult<HashSet<(Rc<String>, scope::BindingId)>> {
-        let mut methods = HashSet::new();
-
-        for ancestor_name in class.ancestors.iter() {
-            let ancestor_class_scope = scopes_buffer.get(ancestor_name).unwrap();
-
-            let scope::SyntaxNode::Class(ancestor_class) = &ancestor_class_scope.node else {
-                unreachable!()
-            };
-
-            for (constructor_name, _params) in ancestor_class.constructors.iter() {
-                methods.extend(self.collect_instance_methods(
-                    constructor_name,
-                    ancestor_class,
-                    scopes_buffer,
-                    visited,
-                )?);
-            }
-        }
-
-        Ok(methods)
     }
 }

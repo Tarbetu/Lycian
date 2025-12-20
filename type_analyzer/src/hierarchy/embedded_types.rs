@@ -3,6 +3,7 @@ use crate::definition::TypeId;
 #[allow(non_snake_case)]
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct EmbeddedTypes {
+    pub count: usize,
     pub object: TypeId,
     pub int8: TypeId,
     pub int16: TypeId,
@@ -48,6 +49,7 @@ impl EmbeddedTypes {
 }
 
 pub const EMBEDDED_TYPES: EmbeddedTypes = EmbeddedTypes {
+    count: 28,
     object: TypeId(0),
     int8: TypeId(1),
     int16: TypeId(2),

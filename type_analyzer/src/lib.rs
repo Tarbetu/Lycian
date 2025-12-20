@@ -1,6 +1,7 @@
 mod definition;
 mod error;
 mod hierarchy;
+mod type_bounds;
 mod type_checker;
 
 pub use definition::TypeId;
@@ -12,9 +13,11 @@ use type_checker::TypeChecker;
 pub fn build_type_hierarchy<'a>(
     scope_hierarchy: scope::Hierarchy<'a>,
 ) -> TypeResult<Hierarchy<'a>> {
-    let mut checker = TypeChecker::new(Hierarchy::new(scope_hierarchy)?);
+    let mut checker = TypeChecker::new(Hierarchy::new(scope_hierarchy));
     checker.traverse()?;
-    let TypeChecker { hierarchy, errors } = checker;
+    let TypeChecker {
+        hierarchy, errors, ..
+    } = checker;
 
     if errors.is_empty() {
         Ok(hierarchy)

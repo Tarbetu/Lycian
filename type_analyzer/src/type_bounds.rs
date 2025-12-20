@@ -1,14 +1,26 @@
 use super::*;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 #[derive(PartialEq, Clone)]
 pub enum TypeInfo {
     Exact(TypeId),
-    NeedsInfer(TypeBounds),
+    NeedsInfer(Rc<RefCell<TypeBounds>>),
 }
 
 impl Default for TypeInfo {
     fn default() -> Self {
-        TypeInfo::NeedsInfer(TypeBounds::default())
+        TypeInfo::NeedsInfer(Rc::default())
+    }
+}
+
+impl TypeInfo {
+    pub fn as_exact(&self) -> Option<TypeId> {
+        if let TypeInfo::Exact(type_id) = self {
+            Some(*type_id)
+        } else {
+            None
+        }
     }
 }
 
@@ -29,6 +41,7 @@ pub struct TypeBounds {
     pub must_accept_block: bool,
 
     // Relational Constraints (If it's deferred)
+    pub can_be_cast_to: Vec<TypeId>,
     pub result_of: Vec<scope::BindingId>,
     pub responds_to: HashSet<syntax::PatternName>,
     pub super_call: Option<syntax::PatternName>,
