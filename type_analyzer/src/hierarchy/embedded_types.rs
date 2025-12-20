@@ -35,12 +35,16 @@ pub struct EmbeddedTypes {
 }
 
 impl EmbeddedTypes {
+    pub fn contains(&self, type_id: TypeId) -> bool {
+        type_id.0 < self.count
+    }
+
     pub fn is_integer(&self, type_id: TypeId) -> bool {
-        (self.int8.0..=self.uIntSize.0).contains(&type_id.0) || type_id == self.literal_integer
+        (self.int8..=self.uIntSize).contains(&type_id) || type_id == self.literal_integer
     }
 
     pub fn is_float(&self, type_id: TypeId) -> bool {
-        (self.float32.0..=self.float64.0).contains(&type_id.0) || type_id == self.literal_float
+        (self.float32..=self.float64).contains(&type_id) || type_id == self.literal_float
     }
 
     pub fn is_number(&self, type_id: TypeId) -> bool {

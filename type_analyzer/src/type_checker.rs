@@ -72,6 +72,11 @@ impl<'a> TypeChecker<'a> {
         self.traverse_classes(0)
     }
 
+    pub fn get_type(&mut self, expr: &syntax::Expression) -> &TypeInfo {
+        let root_expr = self.find_root(ExprId(expr.id));
+        self.lookup_for_type_of_root(root_expr)
+    }
+
     fn traverse_classes(&mut self, class_scope_index: usize) -> TypeResult<()> {
         let Some(class_scope_id) = self
             .hierarchy
@@ -148,36 +153,36 @@ impl<'a> TypeChecker<'a> {
             Grouping(inner_expr) => self.synthesize(inner_expr),
             Literal(literal) => {
                 let literal_type_id = self.literal_type(literal)?;
-                self.declare_expr_type(expr, literal_type_id);
+                self.declare_expr_type(expr, literal_type_id)?;
                 Ok(literal_type_id)
             }
             Binary(lhs, op, rhs) if op.is_logical() => {
                 self.check(lhs, Exactly(EMBEDDED_TYPES.boolean))?;
                 self.check(rhs, Exactly(EMBEDDED_TYPES.boolean))?;
-                self.declare_expr_type(expr, EMBEDDED_TYPES.boolean);
+                self.declare_expr_type(expr, EMBEDDED_TYPES.boolean)?;
                 Ok(EMBEDDED_TYPES.boolean)
             }
             Binary(lhs, op, rhs) if op.is_comparison() => {
                 let lhs_type = self.synthesize(lhs)?;
-                self.check(rhs, Exactly(lhs_type));
-                self.declare_expr_type(expr, EMBEDDED_TYPES.boolean);
+                self.check(rhs, Exactly(lhs_type))?;
+                self.declare_expr_type(expr, EMBEDDED_TYPES.boolean)?;
                 Ok(EMBEDDED_TYPES.boolean)
             }
             Binary(lhs, op, rhs) if op.is_arithmetic() => {
                 let lhs_type = self.synthesize(lhs)?;
-                self.check(rhs, Exactly(lhs_type));
-                self.declare_expr_type(expr, lhs_type);
+                self.check(rhs, Exactly(lhs_type))?;
+                self.declare_expr_type(expr, lhs_type)?;
                 Ok(lhs_type)
             }
             Binary(..) => unreachable!(),
             Unary(syntax::Operator::Not, inner_expr) => {
                 self.check(inner_expr, Exactly(EMBEDDED_TYPES.boolean))?;
-                self.declare_expr_type(expr, EMBEDDED_TYPES.boolean);
+                self.declare_expr_type(expr, EMBEDDED_TYPES.boolean)?;
                 Ok(EMBEDDED_TYPES.boolean)
             }
             Unary(syntax::Operator::Negate, inner_expr) => {
                 let expr_type = self.check(inner_expr, Numeric)?;
-                self.declare_expr_type(expr, expr_type);
+                self.declare_expr_type(expr, expr_type)?;
                 Ok(expr_type)
             }
             IndexOperator(container, indexer) => {
@@ -409,11 +414,6 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    fn lookup_for_type(&mut self, expr_id: ExprId) -> &TypeInfo {
-        let root = self.find_root(expr_id);
-        self.lookup_for_type_of_root(root)
-    }
-
     fn find_root(&mut self, expr_id: ExprId) -> ExprId {
         self.declare_expression(expr_id);
 
@@ -439,7 +439,7 @@ impl<'a> TypeChecker<'a> {
         &mut self,
         first_expr: &syntax::Expression,
         second_expr: &syntax::Expression,
-    ) {
+    ) -> TypeResult<()> {
         let first_root = self.find_root(ExprId(first_expr.id));
         let second_root = self.find_root(ExprId(second_expr.id));
 
@@ -447,7 +447,20 @@ impl<'a> TypeChecker<'a> {
             self.lookup_for_type_of_root(first_root).as_exact(),
             self.lookup_for_type_of_root(second_root).as_exact(),
         ) {
-            // Add some logic about subtyping - supertyping
+            if !(self
+                .hierarchy
+                .is_supertype(first_exact_type, second_exact_type)
+                || self
+                    .hierarchy
+                    .is_supertype(second_exact_type, first_exact_type))
+            {
+                return Err(TypeError {
+                    kind: TypeErrorKind::TypeMismatch,
+                    message: "Types are not compatible",
+                    type_id: first_exact_type,
+                    span: first_expr.span.clone(),
+                });
+            }
         }
 
         let first_rank = self.rank.get(&first_root).unwrap();
@@ -477,9 +490,10 @@ impl<'a> TypeChecker<'a> {
             ) {
                 (Exact(exact_type_id), NeedsInfer(type_bounds))
                 | (NeedsInfer(type_bounds), Exact(exact_type_id)) => {
-                    type_bounds.borrow_mut().can_be_cast_to.push(exact_type_id)
+                    type_bounds.borrow_mut().can_be_cast_to.push(exact_type_id);
+                    Ok(())
                 }
-                (Exact(first_exact_type_id), Exact(second_exact_type_id)) => {}
+                (Exact(first_exact_type_id), Exact(second_exact_type_id)) => Ok(()),
                 _ => unimplemented!(),
             }
         }
@@ -503,11 +517,6 @@ impl<'a> TypeChecker<'a> {
         //     }
         // }
         unimplemented!()
-    }
-
-    pub fn get_type(&mut self, expr: &syntax::Expression) -> Option<&TypeInfo> {
-        let root = self.find_root(ExprId(expr.id));
-        self.root_to_type.get(&root)
     }
 
     fn declare_expression(&mut self, expr_id: ExprId) {

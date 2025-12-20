@@ -2,8 +2,9 @@ mod embedded_types;
 
 use crate::definition::*;
 pub use embedded_types::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
+use std::mem::discriminant;
 
 pub struct Hierarchy<'a> {
     pub types: HashMap<TypeId, TypeDefinition<'a>>,
@@ -20,6 +21,7 @@ pub struct Hierarchy<'a> {
     pub scope_hierarchy: scope::Hierarchy<'a>,
     pub responds_to_table: HashMap<Rc<String>, TypeId>,
     pub call_table: HashMap<scope::ExprId, (scope::BindingId, TypeId)>,
+    supertype_table: HashMap<(TypeId, TypeId), bool>
 }
 
 #[derive(Default)]
@@ -47,6 +49,7 @@ impl<'a> Hierarchy<'a> {
             binding_to_type: HashMap::new(),
             call_table: HashMap::new(),
             ancestors: HashMap::new(),
+            supertype_table: HashMap::new()
         }
         .install_embedded_types()
         .install_custom_types()
@@ -90,6 +93,161 @@ impl<'a> Hierarchy<'a> {
 
         id
     }
+
+    pub(crate) fn is_parent(&self, super_type_id: TypeId, sub_type_id: TypeId) -> bool {
+        let ancestors = self.ancestors.get(&sub_type_id).expect("Type must exist!");
+
+        !ancestors.is_empty() && (ancestors.contains(&sub_type_id) || ancestors.iter().copied().find(|ancestor_id| self.is_parent(super_type_id, *ancestor_id)).is_some())
+    }
+
+    pub(crate) fn is_supertype(
+        &mut self,
+        super_type_id: TypeId,
+        sub_type_id: TypeId,
+    ) -> bool {
+        if let Some(value) = self.supertype_table.get(&(super_type_id, sub_type_id)).copied() {
+            value
+        } else {
+            let super_type = self.types.get(&super_type_id).expect("Type must exist!");
+            let sub_type = self.types.get(&sub_type_id).expect("Type must exist!");
+            let result = self.check_supertype(super_type, sub_type, &mut HashSet::new());
+            self.supertype_table.insert((super_type_id, sub_type_id), result);
+            result
+        }
+    }
+
+    fn check_supertype(
+        &self,
+        super_type: &TypeDefinition,
+        sub_type: &TypeDefinition,
+        visited: &mut HashSet<(TypeId, TypeId)>,
+    ) -> bool {
+        if visited.contains(&(super_type.id(), sub_type.id())) {
+            return false;
+        }
+
+        if super_type.id() == sub_type.id() {
+            return true;
+        }
+
+        if sub_type.is_object() {
+            return false;
+        }
+
+        if super_type.is_object() {
+            return true;
+        }
+
+        if sub_type.is_float64() && super_type.is_floating() {
+            return false;
+        }
+
+        if let (
+            TypeDefinition::Origin {
+                id: super_type_id, ..
+            },
+            TypeDefinition::Origin { id: sub_type_id, .. },
+        ) = (super_type, sub_type)
+            && self.is_parent(*super_type_id, *sub_type_id)
+        {
+            return true;
+        }
+
+        if let (
+            TypeDefinition::Origin {
+                id: super_type_id, ..
+            },
+            TypeDefinition::Variant { origin_id, .. }
+            | TypeDefinition::Literal { origin_id, .. }
+            | TypeDefinition::TypeInstance { origin_id, .. },
+        ) = (super_type, sub_type)
+        {
+            if origin_id == super_type_id {
+                return true;
+            }
+
+            let origin_type = self.types.get(origin_id).unwrap();
+
+            return self.check_supertype(super_type, origin_type, visited);
+        }
+
+        // Parametric contravarience
+        if let (
+            // TypeDefinition::TypeInstance {
+            //     origin_id: super_origin_id,
+            //     args: super_args,
+            //     ..
+            // } |
+            TypeDefinition::Function {
+                origin_id: super_origin_id,
+                args: super_args,
+                ..
+            },
+            // TypeDefinition::TypeInstance {
+            //     origin_id: sub_origin_id,
+            //     args: sub_args,
+            //     ..
+            // } |
+            TypeDefinition::Function {
+                origin_id: sub_origin_id,
+                args: sub_args,
+                ..
+            },
+        ) = (super_type, sub_type)
+            && discriminant(super_type) == discriminant(sub_type)
+            && super_origin_id == sub_origin_id
+            && (super_args.starts_with(sub_args)
+                || (super_args.len() >= sub_args.len()
+                    && super_args.iter().zip(sub_args.iter()).all(
+                        |((super_type_id, _super_arg), (sub_type_id, _sub_arg))| {
+                            visited.insert((*super_type_id, *sub_type_id));
+                            let super_type = self.types.get(super_type_id).unwrap();
+                            let sub_type = self.types.get(sub_type_id).unwrap();
+                            let result =
+                                self.check_supertype(super_type, sub_type, visited);
+                            visited.remove(&(*super_type_id, *sub_type_id));
+                            result
+                        },
+                    )))
+        {
+            return true;
+        }
+
+        // TODO: Eliminate the repetition
+        if let (
+            TypeDefinition::TypeInstance {
+                origin_id: super_origin_id,
+                args: super_args,
+                ..
+            },
+            TypeDefinition::TypeInstance {
+                origin_id: sub_origin_id,
+                args: sub_args,
+                ..
+            }
+                ) = (super_type, sub_type)
+            && discriminant(super_type) == discriminant(sub_type)
+            && super_origin_id == sub_origin_id
+            && (super_args.starts_with(sub_args)
+                || (super_args.len() >= sub_args.len()
+                    && super_args.iter().zip(sub_args.iter()).all(
+                        |(super_type_id, sub_type_id)| {
+                            visited.insert((*super_type_id, *sub_type_id));
+                            let super_type = self.types.get(super_type_id).unwrap();
+                            let sub_type = self.types.get(sub_type_id).unwrap();
+                            let result =
+                                self.check_supertype(super_type, sub_type, visited);
+                            visited.remove(&(*super_type_id, *sub_type_id));
+                            result
+                        },
+                    )))
+        {
+            return true;
+        }
+
+        false
+    }
+
 
     fn install_embedded_types(mut self) -> Self {
         self.types.extend([

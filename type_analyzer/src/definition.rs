@@ -1,7 +1,4 @@
-use crate::Hierarchy;
-use std::collections::HashSet;
 use std::fmt::Display;
-use std::mem::discriminant;
 use std::rc::Rc;
 use synonym::Synonym;
 
@@ -205,164 +202,11 @@ impl<'a> TypeDefinition<'a> {
         }
     }
 
-    // pub(crate) fn is_supertype(
-    //     super_type: &'a Self,
-    //     sub_type: &'a Self,
-    //     hierarchy: &'a Hierarchy<'a>,
-    // ) -> bool {
-    //     Self::check_supertype(super_type, sub_type, hierarchy, &mut HashSet::new())
-    // }
-
-    // fn check_supertype(
-    //     super_type: &Self,
-    //     sub_type: &Self,
-    //     hierarchy: &'a Hierarchy<'a>,
-    //     visited: &mut HashSet<(TypeId, TypeId)>,
-    // ) -> bool {
-    //     if visited.contains(&(super_type.id(), sub_type.id())) {
-    //         return false;
-    //     }
-
-    //     if super_type.id() == sub_type.id() {
-    //         return true;
-    //     }
-
-    //     if sub_type.is_object() {
-    //         return false;
-    //     }
-
-    //     if super_type.is_object() {
-    //         return true;
-    //     }
-
-    //     if (super_type.is_signed_number() || sub_type.is_unsigned_number())
-    //         && (super_type.exact_size() > sub_type.exact_size())
-    //         && sub_type.size() != TypeSize::PointerSized
-    //     {
-    //         return true;
-    //     }
-
-    //     if sub_type.is_float32() && super_type.is_float64() {
-    //         return true;
-    //     }
-
-    //     if sub_type.is_float64() && super_type.is_floating() {
-    //         return false;
-    //     }
-
-    //     if let (
-    //         TypeDefinition::Origin {
-    //             id: super_type_id, ..
-    //         },
-    //         TypeDefinition::Origin { parent_ids, .. },
-    //     ) = (super_type, sub_type)
-    //         && parent_ids
-    //             .values()
-    //             .any(|value| value.contains(super_type_id))
-    //     {
-    //         return true;
-    //     }
-
-    //     if let (
-    //         TypeDefinition::Origin {
-    //             id: super_type_id, ..
-    //         },
-    //         TypeDefinition::Variant { origin_id, .. }
-    //         | TypeDefinition::Literal { origin_id, .. }
-    //         | TypeDefinition::TypeInstance { origin_id, .. },
-    //     ) = (super_type, sub_type)
-    //     {
-    //         if origin_id == super_type_id {
-    //             return true;
-    //         }
-
-    //         let origin_type = hierarchy.types.get(origin_id).unwrap();
-
-    //         return Self::check_supertype(super_type, origin_type, hierarchy, visited);
-    //     }
-
-    //     // Parametric contravarience
-    //     if let (
-    //         // TypeDefinition::TypeInstance {
-    //         //     origin_id: super_origin_id,
-    //         //     args: super_args,
-    //         //     ..
-    //         // } |
-    //         TypeDefinition::Function {
-    //             origin_id: super_origin_id,
-    //             args: super_args,
-    //             ..
-    //         },
-    //         // TypeDefinition::TypeInstance {
-    //         //     origin_id: sub_origin_id,
-    //         //     args: sub_args,
-    //         //     ..
-    //         // } |
-    //         TypeDefinition::Function {
-    //             origin_id: sub_origin_id,
-    //             args: sub_args,
-    //             ..
-    //         },
-    //     ) = (super_type, sub_type)
-    //         && discriminant(super_type) == discriminant(sub_type)
-    //         && super_origin_id == sub_origin_id
-    //         && (super_args.starts_with(sub_args)
-    //             || (super_args.len() >= sub_args.len()
-    //                 && super_args.iter().zip(sub_args.iter()).all(
-    //                     |((super_type_id, _super_arg), (sub_type_id, _sub_arg))| {
-    //                         visited.insert((*super_type_id, *sub_type_id));
-    //                         let super_type = hierarchy.types.get(super_type_id).unwrap();
-    //                         let sub_type = hierarchy.types.get(sub_type_id).unwrap();
-    //                         let result =
-    //                             Self::check_supertype(super_type, sub_type, hierarchy, visited);
-    //                         visited.remove(&(*super_type_id, *sub_type_id));
-    //                         result
-    //                     },
-    //                 )))
-    //     {
-    //         return true;
-    //     }
-
-    //     // TODO: Eliminate the repetition
-    //     if let (
-    //         TypeDefinition::TypeInstance {
-    //             origin_id: super_origin_id,
-    //             args: super_args,
-    //             ..
-    //         },
-    //         TypeDefinition::TypeInstance {
-    //             origin_id: sub_origin_id,
-    //             args: sub_args,
-    //             ..
-    //         }
-    //             ) = (super_type, sub_type)
-    //         && discriminant(super_type) == discriminant(sub_type)
-    //         && super_origin_id == sub_origin_id
-    //         && (super_args.starts_with(sub_args)
-    //             || (super_args.len() >= sub_args.len()
-    //                 && super_args.iter().zip(sub_args.iter()).all(
-    //                     |(super_type_id, sub_type_id)| {
-    //                         visited.insert((*super_type_id, *sub_type_id));
-    //                         let super_type = hierarchy.types.get(super_type_id).unwrap();
-    //                         let sub_type = hierarchy.types.get(sub_type_id).unwrap();
-    //                         let result =
-    //                             Self::check_supertype(super_type, sub_type, hierarchy, visited);
-    //                         visited.remove(&(*super_type_id, *sub_type_id));
-    //                         result
-    //                     },
-    //                 )))
-    //     {
-    //         return true;
-    //     }
-
-    //     false
-    // }
-
-    fn is_object(&self) -> bool {
+    pub(crate) fn is_object(&self) -> bool {
         matches!(self, TypeDefinition::Object)
     }
 
-    fn is_float32(&self) -> bool {
+    pub(crate) fn is_float32(&self) -> bool {
         matches!(
             self,
             TypeDefinition::EmbeddedType {
@@ -372,7 +216,7 @@ impl<'a> TypeDefinition<'a> {
         )
     }
 
-    fn is_float64(&self) -> bool {
+    pub(crate) fn is_float64(&self) -> bool {
         matches!(
             self,
             TypeDefinition::EmbeddedType {
@@ -382,7 +226,7 @@ impl<'a> TypeDefinition<'a> {
         )
     }
 
-    fn is_floating(&self) -> bool {
+    pub(crate) fn is_floating(&self) -> bool {
         matches!(
             self,
             TypeDefinition::EmbeddedType {
@@ -394,7 +238,7 @@ impl<'a> TypeDefinition<'a> {
         )
     }
 
-    fn is_signed_number(&self) -> bool {
+    pub(crate) fn is_signed_number(&self) -> bool {
         matches!(
             self,
             TypeDefinition::EmbeddedType {
@@ -411,7 +255,7 @@ impl<'a> TypeDefinition<'a> {
         )
     }
 
-    fn is_unsigned_number(&self) -> bool {
+    pub(crate) fn is_unsigned_number(&self) -> bool {
         matches!(
             self,
             TypeDefinition::EmbeddedType {
