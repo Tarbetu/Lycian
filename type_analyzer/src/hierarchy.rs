@@ -97,7 +97,7 @@ impl<'a> Hierarchy<'a> {
     pub(crate) fn is_parent(&self, super_type_id: TypeId, sub_type_id: TypeId) -> bool {
         let ancestors = self.ancestors.get(&sub_type_id).expect("Type must exist!");
 
-        !ancestors.is_empty() && (ancestors.contains(&sub_type_id) || ancestors.iter().copied().find(|ancestor_id| self.is_parent(super_type_id, *ancestor_id)).is_some())
+        !ancestors.is_empty() && (ancestors.contains(&super_type_id) || ancestors.iter().copied().find(|ancestor_id| self.is_parent(super_type_id, *ancestor_id)).is_some())
     }
 
     pub(crate) fn is_supertype(
