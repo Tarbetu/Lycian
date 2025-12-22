@@ -21,7 +21,9 @@ pub struct Hierarchy<'a> {
     pub scope_hierarchy: scope::Hierarchy<'a>,
     pub responds_to_table: HashMap<Rc<String>, TypeId>,
     pub call_table: HashMap<scope::ExprId, (scope::BindingId, TypeId)>,
-    supertype_table: HashMap<(TypeId, TypeId), bool>
+
+    // TODO: Clean the cache after everything is done
+    supertype_cache: HashMap<(TypeId, TypeId), bool>
 }
 
 #[derive(Default)]
@@ -38,7 +40,7 @@ impl<'a> Hierarchy<'a> {
     pub(crate) fn new(scope_hierarchy: scope::Hierarchy<'a>) -> Self {
         Self {
             types: HashMap::new(),
-            last_id: TypeId(24),
+            last_id: TypeId(EMBEDDED_TYPES.count),
             name_to_origin_id: HashMap::new(),
             variants_of_origin: HashMap::new(),
             literal_types: LiteralTypeTable::default(),
@@ -49,7 +51,7 @@ impl<'a> Hierarchy<'a> {
             binding_to_type: HashMap::new(),
             call_table: HashMap::new(),
             ancestors: HashMap::new(),
-            supertype_table: HashMap::new()
+            supertype_cache: HashMap::new()
         }
         .install_embedded_types()
         .install_custom_types()
@@ -87,17 +89,12 @@ impl<'a> Hierarchy<'a> {
         let type_instances = self
             .type_instances
             .entry(origin_id)
-            .or_insert_with(HashMap::new);
+            .or_default();
+
 
         type_instances.insert(type_def.type_args().clone(), type_def.id());
 
         id
-    }
-
-    pub(crate) fn is_parent(&self, super_type_id: TypeId, sub_type_id: TypeId) -> bool {
-        let ancestors = self.ancestors.get(&sub_type_id).expect("Type must exist!");
-
-        !ancestors.is_empty() && (ancestors.contains(&super_type_id) || ancestors.iter().copied().find(|ancestor_id| self.is_parent(super_type_id, *ancestor_id)).is_some())
     }
 
     pub(crate) fn is_supertype(
@@ -105,13 +102,13 @@ impl<'a> Hierarchy<'a> {
         super_type_id: TypeId,
         sub_type_id: TypeId,
     ) -> bool {
-        if let Some(value) = self.supertype_table.get(&(super_type_id, sub_type_id)).copied() {
+        if let Some(value) = self.supertype_cache.get(&(super_type_id, sub_type_id)).copied() {
             value
         } else {
             let super_type = self.types.get(&super_type_id).expect("Type must exist!");
             let sub_type = self.types.get(&sub_type_id).expect("Type must exist!");
             let result = self.check_supertype(super_type, sub_type, &mut HashSet::new());
-            self.supertype_table.insert((super_type_id, sub_type_id), result);
+            self.supertype_cache.insert((super_type_id, sub_type_id), result);
             result
         }
     }
@@ -248,6 +245,11 @@ impl<'a> Hierarchy<'a> {
         false
     }
 
+    fn is_parent(&self, super_type_id: TypeId, sub_type_id: TypeId) -> bool {
+        let ancestors = self.ancestors.get(&sub_type_id).expect("Type must exist!");
+
+        !ancestors.is_empty() && (ancestors.contains(&super_type_id) || ancestors.iter().copied().any(|ancestor_id| self.is_parent(super_type_id, ancestor_id)))
+    }
 
     fn install_embedded_types(mut self) -> Self {
         self.types.extend([
@@ -440,26 +442,6 @@ impl<'a> Hierarchy<'a> {
                 },
             ),
             (
-                EMBEDDED_TYPES.literal_integer,
-                TypeDefinition::EmbeddedType {
-                    id: EMBEDDED_TYPES.literal_integer,
-                    name: EmbeddedTypeName::Primitive(PrimitiveType::Integer(
-                        IntegerNumber::Literal,
-                    )),
-                    size: TypeSize::Exact(4),
-                },
-            ),
-            (
-                EMBEDDED_TYPES.literal_float,
-                TypeDefinition::EmbeddedType {
-                    id: EMBEDDED_TYPES.literal_float,
-                    name: EmbeddedTypeName::Primitive(PrimitiveType::Floating(
-                        FloatingNumber::Literal,
-                    )),
-                    size: TypeSize::Exact(8),
-                },
-            ),
-            (
                 EMBEDDED_TYPES.literal_true,
                 TypeDefinition::EmbeddedType {
                     id: EMBEDDED_TYPES.literal_true,
@@ -473,22 +455,6 @@ impl<'a> Hierarchy<'a> {
                     id: EMBEDDED_TYPES.literal_false,
                     name: EmbeddedTypeName::Primitive(PrimitiveType::LiteralFalse),
                     size: TypeSize::Exact(1),
-                },
-            ),
-            (
-                EMBEDDED_TYPES.literal_empty_list,
-                TypeDefinition::EmbeddedType {
-                    id: EMBEDDED_TYPES.literal_empty_list,
-                    name: EmbeddedTypeName::Compound(CompoundType::EmptyList),
-                    size: TypeSize::Exact(0),
-                },
-            ),
-            (
-                EMBEDDED_TYPES.literal_empty_array,
-                TypeDefinition::EmbeddedType {
-                    id: EMBEDDED_TYPES.literal_empty_array,
-                    name: EmbeddedTypeName::Compound(CompoundType::EmptyArray),
-                    size: TypeSize::Exact(0),
                 },
             ),
         ]);

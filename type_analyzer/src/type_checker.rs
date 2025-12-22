@@ -1,19 +1,20 @@
 use crate::definition::TypeDefinition;
 use crate::error::{TypeError, TypeErrorKind, TypeResult};
 use crate::hierarchy::EMBEDDED_TYPES;
-use crate::type_bounds::*;
+use crate::type_bounds::{self, *};
 use crate::{hierarchy::Hierarchy, TypeId};
 use scope::ExprId;
 use scope::SyntaxNode;
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::rc::Rc;
 
 pub(crate) struct TypeChecker<'a> {
     pub hierarchy: Hierarchy<'a>,
     pub errors: Vec<TypeError>,
 
     // Every expression points to it's parents (Roots don't have any parent)
-    expr_to_parent: HashMap<ExprId, ParentStatus>,
+    expr_to_parent: HashMap<ExprId, ExprId>,
 
     // Roots expressions to type
     root_to_type: HashMap<ExprId, TypeInfo>,
@@ -27,32 +28,9 @@ pub(crate) struct TypeChecker<'a> {
 
     // Instead of stopping at the first concrete type error, just collect them
     early_errors: Vec<TypeError>,
-}
 
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub enum ParentStatus {
-    HasParent(ExprId),
-    Root,
-}
-
-enum ExpectedType<'a> {
-    // Requires just the type
-    Exactly(TypeId),
-
-    // One of the types (F.g: Addition operation accepts a string or number)
-    OneOf(&'a [TypeId]),
-
-    // Origin or it's another variant
-    OriginWithVariants(TypeId),
-
-    // Subtype or supertype
-    KindOf(TypeId),
-
-    // Numeric as -expr
-    Numeric,
-
-    // Leave it to the synthesis
-    JustInfer,
+    // Collecting the overload types
+    method_overload_types: HashMap<Rc<String>, HashSet<TypeId>>,
 }
 
 impl<'a> TypeChecker<'a> {
@@ -65,6 +43,7 @@ impl<'a> TypeChecker<'a> {
             rank: HashMap::new(),
             empty_type_info: TypeInfo::default(),
             early_errors: Vec::new(),
+            method_overload_types: HashMap::new(),
         }
     }
 
@@ -90,7 +69,7 @@ impl<'a> TypeChecker<'a> {
 
         let scope::Scope {
             node: SyntaxNode::Class(_),
-            children_ids: children_ids,
+            children_ids,
             ..
         } = self
             .hierarchy
@@ -110,88 +89,102 @@ impl<'a> TypeChecker<'a> {
     }
 
     fn traverse_class(&mut self, class_scope_id: scope::ScopeId) -> TypeResult<()> {
-        unimplemented!()
-        // for (method_name, method_overloads) in &class.methods {
-        //     self.traverse_method(method_name, method_overloads)?;
-        // }
+        let class_scope = self
+            .hierarchy
+            .scope_hierarchy
+            .scopes
+            .remove(&class_scope_id)
+            .expect("Scope does not exist!");
 
-        // Ok(())
-    }
+        for child_scope_id in class_scope.children_ids.iter() {
+            use scope::SyntaxNode::*;
 
-    fn traverse_method(
-        &mut self,
-        method_name: &str,
-        method_overloads: &'a [syntax::Function],
-    ) -> TypeResult<()> {
-        // All overloads has to share same inheritance line, so we have to check all of them
-        let mut types = HashSet::new();
+            let child_scope = self
+                .hierarchy
+                .scope_hierarchy
+                .scopes
+                .get(child_scope_id)
+                .expect("Scope does not exist!");
 
-        for method in method_overloads {
-            let type_id = self.return_type(
-                method
-                    .return_type
-                    .as_ref()
-                    .expect("Every method definition required to include a return type"),
-            )?;
-            types.insert(type_id);
+            match child_scope.node {
+                Constructor(..) => {}
+                Function(method) => {
+                    let TypeInfo::Exact(type_id) = self.return_type(
+                        method
+                            .return_type
+                            .as_ref()
+                            .expect("Every method definition required to include a return type"),
+                    )?
+                    else {
+                        unreachable!()
+                    };
 
-            if let Err(err) = self.check(&method.body, ExpectedType::Exactly(type_id)) {
-                self.errors.push(err);
+                    if let Err(err) = self.check(&method.body, TypeInfo::Exact(type_id)) {
+                        self.errors.push(err);
+                    }
+
+                    self.method_overload_types
+                        .entry(method.name.clone())
+                        .or_default()
+                        .insert(type_id);
+                }
+                otherwise => unreachable!("Expected constructor or function, found: {otherwise:?}"),
             }
         }
 
-        // Check the inheritance line here
+        self.hierarchy
+            .scope_hierarchy
+            .scopes
+            .insert(class_scope_id, class_scope);
 
         Ok(())
     }
 
-    fn synthesize(&mut self, expr: &'a syntax::Expression) -> TypeResult<TypeId> {
+    fn synthesize(&mut self, expr: &'a syntax::Expression) -> TypeResult<TypeInfo> {
         use syntax::ExpressionKind::*;
-        use ExpectedType::*;
+        use TypeInfo::*;
 
         match expr.kind.as_ref() {
             Grouping(inner_expr) => self.synthesize(inner_expr),
             Literal(literal) => {
-                let literal_type_id = self.literal_type(literal)?;
-                self.declare_expr_type(expr, literal_type_id)?;
-                Ok(literal_type_id)
+                let literal_type_id = self.synthesize_literal_type(literal)?;
+                self.declare_constraints(expr, &literal_type_id)?;
+                Ok(literal_type_id.into())
             }
             Binary(lhs, op, rhs) if op.is_logical() => {
-                self.check(lhs, Exactly(EMBEDDED_TYPES.boolean))?;
-                self.check(rhs, Exactly(EMBEDDED_TYPES.boolean))?;
-                self.declare_expr_type(expr, EMBEDDED_TYPES.boolean)?;
-                Ok(EMBEDDED_TYPES.boolean)
+                self.check(lhs, Exact(EMBEDDED_TYPES.boolean))?;
+                self.check(rhs, Exact(EMBEDDED_TYPES.boolean))?;
+                self.declare_constraints(expr, &Exact(EMBEDDED_TYPES.boolean))?;
+                Ok(EMBEDDED_TYPES.boolean.into())
             }
             Binary(lhs, op, rhs) if op.is_comparison() => {
                 let lhs_type = self.synthesize(lhs)?;
-                self.check(rhs, Exactly(lhs_type))?;
-                self.declare_expr_type(expr, EMBEDDED_TYPES.boolean)?;
-                Ok(EMBEDDED_TYPES.boolean)
+                self.check(rhs, lhs_type)?;
+                self.declare_constraints(expr, &Exact(EMBEDDED_TYPES.boolean))?;
+                Ok(EMBEDDED_TYPES.boolean.into())
             }
             Binary(lhs, op, rhs) if op.is_arithmetic() => {
                 let lhs_type = self.synthesize(lhs)?;
-                self.check(rhs, Exactly(lhs_type))?;
-                self.declare_expr_type(expr, lhs_type)?;
-                Ok(lhs_type)
+                let constraints = self.check(rhs, lhs_type)?;
+                self.declare_constraints(expr, &constraints)?;
+                Ok(constraints)
             }
             Binary(..) => unreachable!(),
             Unary(syntax::Operator::Not, inner_expr) => {
-                self.check(inner_expr, Exactly(EMBEDDED_TYPES.boolean))?;
-                self.declare_expr_type(expr, EMBEDDED_TYPES.boolean)?;
-                Ok(EMBEDDED_TYPES.boolean)
+                self.check(inner_expr, Exact(EMBEDDED_TYPES.boolean))?;
+                self.declare_constraints(expr, &Exact(EMBEDDED_TYPES.boolean))?;
+                Ok(EMBEDDED_TYPES.boolean.into())
             }
             Unary(syntax::Operator::Negate, inner_expr) => {
-                let expr_type = self.check(inner_expr, Numeric)?;
-                self.declare_expr_type(expr, expr_type)?;
+                let expected_type = TypeInfo::needs_infer(TypeBounds::default().numeric());
+                let expr_type = self.check(inner_expr, expected_type)?;
+                self.declare_constraints(expr, &expr_type)?;
                 Ok(expr_type)
             }
             IndexOperator(container, indexer) => {
                 let container_type = self.synthesize(container)?;
                 // Indexer always assumed as uIntSize!
-                self.check(
-                    indexer,
-                    OneOf(&[EMBEDDED_TYPES.literal_integer, EMBEDDED_TYPES.uIntSize]),
-                )?;
+                self.check(indexer, Exact(EMBEDDED_TYPES.uIntSize))?;
 
                 // let element_type = match container.kind.as_ref() {};
 
@@ -221,13 +214,14 @@ impl<'a> TypeChecker<'a> {
     fn check(
         &mut self,
         expr: &syntax::Expression,
-        expected_type: ExpectedType,
-    ) -> TypeResult<TypeId> {
+        expected_type: TypeInfo,
+    ) -> TypeResult<TypeInfo> {
         unimplemented!()
     }
 
-    fn return_type(&mut self, expr: &'a syntax::Expression) -> TypeResult<TypeId> {
+    fn return_type(&mut self, expr: &'a syntax::Expression) -> TypeResult<TypeInfo> {
         use syntax::ExpressionKind::*;
+        use TypeInfo::Exact;
 
         match expr.kind.as_ref() {
             Call {
@@ -250,7 +244,7 @@ impl<'a> TypeChecker<'a> {
                     });
                 };
 
-                Ok(origin_type_id)
+                Ok(Exact(origin_type_id))
             }
             Call {
                 caller: variant_name,
@@ -301,9 +295,9 @@ impl<'a> TypeChecker<'a> {
                     });
                 };
 
-                Ok(variant_id)
+                Ok(Exact(variant_id))
             }
-            Literal(literal) => Ok(self.literal_type(literal))?,
+            Literal(literal) => Ok(self.synthesize_literal_type(literal))?,
             Grouping(inner_expr) => self.return_type(&inner_expr),
             _ => {
                 return Err(TypeError {
@@ -316,41 +310,17 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    fn literal_type(&mut self, literal: &'a syntax::Literal) -> TypeResult<TypeId> {
+    fn synthesize_literal_type(&mut self, literal: &'a syntax::Literal) -> TypeResult<TypeInfo> {
         use syntax::Literal::*;
-        use ExpectedType::{Exactly, KindOf};
+        use TypeInfo::*;
 
         match literal {
-            Integer(_) => match self.hierarchy.literal_types.integers.get(literal).copied() {
-                Some(type_id) => Ok(type_id),
-                None => {
-                    let type_id = self.hierarchy.next_id();
-                    let type_def = TypeDefinition::Literal {
-                        id: type_id,
-                        origin_id: EMBEDDED_TYPES.literal_integer,
-                        node: literal,
-                    };
-                    self.hierarchy.types.insert(type_id, type_def);
-                    Ok(type_id)
-                }
-            },
-            Float(_) => match self.hierarchy.literal_types.floats.get(literal).copied() {
-                Some(type_id) => Ok(type_id),
-                None => {
-                    let type_id = self.hierarchy.next_id();
-                    let type_def = TypeDefinition::Literal {
-                        id: type_id,
-                        origin_id: EMBEDDED_TYPES.literal_float,
-                        node: literal,
-                    };
-                    self.hierarchy.types.insert(type_id, type_def);
-                    Ok(type_id)
-                }
-            },
-            Boolean(true) => Ok(EMBEDDED_TYPES.literal_true),
-            Boolean(false) => Ok(EMBEDDED_TYPES.literal_false),
+            Integer(_) => Ok(TypeInfo::needs_infer(TypeBounds::default().integer())),
+            Float(_) => Ok(TypeInfo::needs_infer(TypeBounds::default().floating())),
+            Boolean(true) => Ok(Exact(EMBEDDED_TYPES.literal_true)),
+            Boolean(false) => Ok(Exact(EMBEDDED_TYPES.literal_false)),
             Char(_) => match self.hierarchy.literal_types.chars.get(literal).copied() {
-                Some(type_id) => Ok(type_id),
+                Some(type_id) => Ok(Exact(type_id)),
                 None => {
                     let type_id = self.hierarchy.next_id();
                     let type_def = TypeDefinition::Literal {
@@ -359,11 +329,11 @@ impl<'a> TypeChecker<'a> {
                         node: literal,
                     };
                     self.hierarchy.types.insert(type_id, type_def);
-                    Ok(type_id)
+                    Ok(Exact(type_id))
                 }
             },
             Str(_) => match self.hierarchy.literal_types.strings.get(literal).copied() {
-                Some(type_id) => Ok(type_id),
+                Some(type_id) => Ok(Exact(type_id)),
                 None => {
                     let type_id = self.hierarchy.next_id();
                     let type_def = TypeDefinition::Literal {
@@ -372,43 +342,47 @@ impl<'a> TypeChecker<'a> {
                         node: literal,
                     };
                     self.hierarchy.types.insert(type_id, type_def);
-                    Ok(type_id)
+                    Ok(Exact(type_id))
                 }
             },
             LiteralList(expr_list) => {
                 if let Some(expr) = expr_list.front() {
-                    let type_expr_id = self.synthesize(expr)?;
+                    let type_constraints = {
+                        let mut type_constraints = self.synthesize(expr)?;
 
-                    for expr in expr_list.iter().skip(1) {
-                        self.check(expr, KindOf(type_expr_id))?;
-                    }
+                        for expr in expr_list.iter().skip(1) {
+                            type_constraints = self.check(expr, type_constraints)?;
+                        }
 
-                    Ok(self
-                        .hierarchy
-                        .get_type_instance(EMBEDDED_TYPES.linked_list, &vec![type_expr_id]))
-                } else {
-                    Ok(self.hierarchy.get_type_instance(
-                        EMBEDDED_TYPES.linked_list,
-                        &vec![EMBEDDED_TYPES.literal_empty_list],
+                        type_constraints
+                    };
+
+                    Ok(TypeInfo::needs_infer(
+                        TypeBounds::default().list().with_argument(type_constraints),
                     ))
+                } else {
+                    Ok(TypeInfo::needs_infer(TypeBounds::default().list()))
                 }
             }
             LiteralArray(expr_array) => {
                 if let Some(expr) = expr_array.get(0) {
-                    let type_expr_id = self.synthesize(expr)?;
+                    let type_constraints = {
+                        let mut type_constraints = self.synthesize(expr)?;
 
-                    for expr in expr_array.iter().skip(1) {
-                        self.check(expr, Exactly(type_expr_id))?;
-                    }
+                        for expr in expr_array.iter().skip(1) {
+                            type_constraints = self.check(expr, type_constraints)?;
+                        }
 
-                    Ok(self
-                        .hierarchy
-                        .get_type_instance(EMBEDDED_TYPES.array, &vec![type_expr_id]))
-                } else {
-                    Ok(self.hierarchy.get_type_instance(
-                        EMBEDDED_TYPES.array,
-                        &vec![EMBEDDED_TYPES.literal_empty_array],
+                        type_constraints
+                    };
+
+                    Ok(TypeInfo::needs_infer(
+                        TypeBounds::default()
+                            .array()
+                            .with_argument(type_constraints),
                     ))
+                } else {
+                    Ok(TypeInfo::needs_infer(TypeBounds::default().array()))
                 }
             }
         }
@@ -417,15 +391,14 @@ impl<'a> TypeChecker<'a> {
     fn find_root(&mut self, expr_id: ExprId) -> ExprId {
         self.declare_expression(expr_id);
 
-        let parent = self.expr_to_parent.get(&expr_id).copied().unwrap();
+        let parent_id = self.expr_to_parent.get(&expr_id).copied().unwrap();
 
-        if let ParentStatus::HasParent(parent_id) = parent {
-            let root = self.find_root(parent_id);
-            self.expr_to_parent
-                .insert(expr_id, ParentStatus::HasParent(parent_id));
-            root
+        if expr_id == parent_id {
+            parent_id
         } else {
-            expr_id
+            let root = self.find_root(parent_id);
+            self.expr_to_parent.insert(expr_id, parent_id);
+            root
         }
     }
 
@@ -447,9 +420,10 @@ impl<'a> TypeChecker<'a> {
             self.lookup_for_type_of_root(first_root).as_exact(),
             self.lookup_for_type_of_root(second_root).as_exact(),
         ) {
-            if !(self
-                .hierarchy
-                .is_supertype(first_exact_type, second_exact_type)
+            if !(first_exact_type != second_exact_type
+                || self
+                    .hierarchy
+                    .is_supertype(first_exact_type, second_exact_type)
                 || self
                     .hierarchy
                     .is_supertype(second_exact_type, first_exact_type))
@@ -479,8 +453,7 @@ impl<'a> TypeChecker<'a> {
             }
         };
 
-        self.expr_to_parent
-            .insert(old_root, ParentStatus::HasParent(new_root));
+        self.expr_to_parent.insert(old_root, new_root);
 
         {
             use TypeInfo::*;
@@ -490,39 +463,155 @@ impl<'a> TypeChecker<'a> {
             ) {
                 (Exact(exact_type_id), NeedsInfer(type_bounds))
                 | (NeedsInfer(type_bounds), Exact(exact_type_id)) => {
-                    type_bounds.borrow_mut().can_be_cast_to.push(exact_type_id);
+                    type_bounds.borrow_mut().upper_bounds.insert(exact_type_id);
                     Ok(())
                 }
-                (Exact(first_exact_type_id), Exact(second_exact_type_id)) => Ok(()),
+                (Exact(_first_exact_type_id), Exact(_second_exact_type_id)) => Ok(()),
                 _ => unimplemented!(),
             }
         }
     }
 
-    fn declare_expr_type(&mut self, expr: &syntax::Expression, type_id: TypeId) -> TypeResult<()> {
-        let expr_id = ExprId(expr.id);
-        let root = self.find_root(expr_id);
+    fn declare_constraints(
+        &mut self,
+        expr: &syntax::Expression,
+        constraints: &TypeInfo,
+    ) -> TypeResult<()> {
+        // use TypeInfo::*;
+        // let expr_id = ExprId(expr.id);
+        // let root = self.find_root(expr_id);
 
         // match self.root_to_type.get(&root) {
-        //     Some(TypeInfo::Exact(existing_type)) if *existing_type == type_id => Ok(()),
-        //     Some(TypeInfo::Exact(existing_type)) => Err(TypeError {
+        //     Some(Exact(existing_type))
+        //         if *existing_type == inferred_type_id
+        //             || self
+        //                 .hierarchy
+        //                 .is_supertype(*existing_type, inferred_type_id) =>
+        //     {
+        //         Ok(())
+        //     }
+        //     Some(Exact(existing_type)) => Err(TypeError {
         //         kind: TypeErrorKind::TypeMismatch,
-        //         message: "Type already set to different value",
+        //         message: "Infered type is not compatible with declared type",
         //         type_id: *existing_type,
         //         span: expr.span.clone(),
         //     }),
-        //     None => {
-        //         self.root_to_type.insert(expr_id, TypeInfo::Exact(type_id));
+        //     Some(NeedsInfer(type_bounds)) => {
+        //         type_bounds
+        //             .borrow_mut()
+        //             .lower_bounds
+        //             .insert(inferred_type_id);
+
         //         Ok(())
         //     }
+        //     None => {
+        //         // self.root_to_type.insert(expr_id, v);
+        //         unimplemented!()
+        //         // self.root_to_type.insert(expr_id, TypeInfo::Exact(inf_id));
+        //         // Ok(())
+        //     }
         // }
+
         unimplemented!()
+    }
+
+    fn declare_type(
+        &mut self,
+        expr: &syntax::Expression,
+        declared_type_id: TypeId,
+    ) -> TypeResult<()> {
+        use TypeInfo::*;
+        let expr_id = ExprId(expr.id);
+        let root = self.find_root(expr_id);
+
+        match self.root_to_type.remove(&root) {
+            Some(Exact(existing_type)) if existing_type == declared_type_id => {
+                self.root_to_type.insert(root, Exact(existing_type));
+                Ok(())
+            }
+            Some(Exact(existing_type)) => Err(TypeError {
+                kind: TypeErrorKind::UnexpectedType,
+                message: "Declared type is different than the existing type",
+                type_id: existing_type,
+                span: expr.span.clone(),
+            }),
+            Some(NeedsInfer(type_bounds)) => {
+                let type_bounds = type_bounds.borrow();
+                let is_upper_bounds_empty = type_bounds.upper_bounds.is_empty();
+                let is_lower_bounds_empty = type_bounds.lower_bounds.is_empty();
+
+                if is_upper_bounds_empty && is_lower_bounds_empty {
+                    // We allow casts integer to float, but not the otherwise
+                    if EMBEDDED_TYPES.is_integer(declared_type_id) && type_bounds.must_be_floating {
+                        Err(TypeError {
+                            kind: TypeErrorKind::UnexpectedType,
+                            message: "You can not cast a float to integer",
+                            type_id: declared_type_id,
+                            span: expr.span.clone(),
+                        })
+                    } else {
+                        self.root_to_type.insert(expr_id, Exact(declared_type_id));
+                        Ok(())
+                    }
+                } else if is_upper_bounds_empty {
+                    if type_bounds.lower_bounds.iter().copied().any(|lower_bound| {
+                        self.hierarchy.is_supertype(declared_type_id, lower_bound)
+                    }) {
+                        self.root_to_type.insert(expr_id, Exact(declared_type_id));
+                        Ok(())
+                    } else {
+                        Err(TypeError {
+                            kind: TypeErrorKind::UnexpectedType,
+                            message: "Declared type is not compatible with existing lower bounds",
+                            type_id: declared_type_id,
+                            span: expr.span.clone(),
+                        })
+                    }
+                } else if is_lower_bounds_empty {
+                    if type_bounds.upper_bounds.iter().copied().any(|upper_bound| {
+                        self.hierarchy.is_supertype(upper_bound, declared_type_id)
+                    }) {
+                        self.root_to_type.insert(expr_id, Exact(declared_type_id));
+                        Ok(())
+                    } else {
+                        Err(TypeError {
+                            kind: TypeErrorKind::UnexpectedType,
+                            message: "Declared type is not compatible with existing upper bounds",
+                            type_id: declared_type_id,
+                            span: expr.span.clone(),
+                        })
+                    }
+                } else {
+                    let is_compatible =
+                        type_bounds.lower_bounds.iter().copied().any(|lower_bound| {
+                            self.hierarchy.is_supertype(declared_type_id, lower_bound)
+                        }) && type_bounds.upper_bounds.iter().copied().any(|upper_bound| {
+                            self.hierarchy.is_supertype(upper_bound, declared_type_id)
+                        });
+
+                    if is_compatible {
+                        self.root_to_type.insert(expr_id, Exact(declared_type_id));
+                        Ok(())
+                    } else {
+                        Err(TypeError {
+                            kind: TypeErrorKind::UnexpectedType,
+                            message: "Declared type is not compatible with existing bounds",
+                            type_id: declared_type_id,
+                            span: expr.span.clone(),
+                        })
+                    }
+                }
+            }
+            None => {
+                self.root_to_type.insert(expr_id, Exact(declared_type_id));
+                Ok(())
+            }
+        }
     }
 
     fn declare_expression(&mut self, expr_id: ExprId) {
         if !self.expr_to_parent.contains_key(&expr_id) {
-            self.expr_to_parent
-                .insert(expr_id, ParentStatus::HasParent(expr_id));
+            self.expr_to_parent.insert(expr_id, expr_id);
             self.rank.insert(expr_id, 0);
         }
     }

@@ -15,7 +15,17 @@ impl Default for TypeInfo {
     }
 }
 
+impl From<TypeId> for TypeInfo {
+    fn from(type_id: TypeId) -> Self {
+        TypeInfo::Exact(type_id)
+    }
+}
+
 impl TypeInfo {
+    pub fn needs_infer(type_bounds: TypeBounds) -> Self {
+        TypeInfo::NeedsInfer(Rc::new(RefCell::new(type_bounds)))
+    }
+
     pub fn as_exact(&self) -> Option<TypeId> {
         if let TypeInfo::Exact(type_id) = self {
             Some(*type_id)
@@ -27,22 +37,26 @@ impl TypeInfo {
 
 #[derive(PartialEq, Default, Clone)]
 pub struct TypeBounds {
-    // Subtyping relation
+    // -- Subtyping relation
     pub upper_bounds: HashSet<TypeId>,
     pub lower_bounds: HashSet<TypeId>,
 
-    // Trait Constraints
+    // -- It will passed as a argument to the type instance
+    pub type_argument: Vec<TypeInfo>,
+
+    // -- Trait Constraints
     pub must_be_numeric: bool,
     pub must_be_addable: bool,
     pub must_be_integer: bool,
     pub must_be_floating: bool,
+    pub must_be_list: bool,
+    pub must_be_array: bool,
 
-    // Capability Constraints
+    // -- Capability Constraints
     pub must_be_callable: bool,
     pub must_accept_block: bool,
 
-    // Relational Constraints (If it's deferred)
-    pub can_be_cast_to: Vec<TypeId>,
+    // -- Relational Constraints (If it's deferred)
     pub result_of: Vec<scope::BindingId>,
     pub responds_to: HashSet<syntax::PatternName>,
     pub super_call: Option<syntax::PatternName>,
@@ -56,6 +70,11 @@ impl TypeBounds {
 
     pub fn supertype_of(mut self, subtype_id: TypeId) -> Self {
         self.lower_bounds.insert(subtype_id);
+        self
+    }
+
+    pub fn with_argument(mut self, info: TypeInfo) -> Self {
+        self.type_argument.push(info);
         self
     }
 
@@ -78,6 +97,16 @@ impl TypeBounds {
     pub fn floating(mut self) -> Self {
         self.must_be_numeric = true;
         self.must_be_floating = true;
+        self
+    }
+
+    pub fn list(mut self) -> Self {
+        self.must_be_list = true;
+        self
+    }
+
+    pub fn array(mut self) -> Self {
+        self.must_be_array = true;
         self
     }
 
