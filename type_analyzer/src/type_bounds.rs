@@ -42,7 +42,7 @@ pub struct TypeBounds {
     pub lower_bounds: HashSet<TypeId>,
 
     // -- It will passed as a argument to the type instance
-    pub type_argument: Vec<TypeInfo>,
+    pub type_arguments: Vec<TypeInfo>,
 
     // -- Trait Constraints
     pub must_be_numeric: bool,
@@ -63,18 +63,18 @@ pub struct TypeBounds {
 }
 
 impl TypeBounds {
-    pub fn subtype_of(mut self, supertype_id: TypeId) -> Self {
+    pub fn add_upper_bound(mut self, supertype_id: TypeId) -> Self {
         self.upper_bounds.insert(supertype_id);
         self
     }
 
-    pub fn supertype_of(mut self, subtype_id: TypeId) -> Self {
+    pub fn add_lower_bound(mut self, subtype_id: TypeId) -> Self {
         self.lower_bounds.insert(subtype_id);
         self
     }
 
     pub fn with_argument(mut self, info: TypeInfo) -> Self {
-        self.type_argument.push(info);
+        self.type_arguments.push(info);
         self
     }
 

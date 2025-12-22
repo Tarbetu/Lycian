@@ -109,7 +109,8 @@ impl<'a> TypeChecker<'a> {
             match child_scope.node {
                 Constructor(..) => {}
                 Function(method) => {
-                    let TypeInfo::Exact(type_id) = self.return_type(
+                    let TypeInfo::Exact(type_id) = self.extract_type_declaration(
+                        class_scope_id,
                         method
                             .return_type
                             .as_ref()
@@ -140,14 +141,18 @@ impl<'a> TypeChecker<'a> {
         Ok(())
     }
 
-    fn synthesize(&mut self, expr: &'a syntax::Expression) -> TypeResult<TypeInfo> {
+    fn synthesize(
+        &mut self,
+        scope_id: scope::ScopeId,
+        expr: &'a syntax::Expression,
+    ) -> TypeResult<TypeInfo> {
         use syntax::ExpressionKind::*;
         use TypeInfo::*;
 
         match expr.kind.as_ref() {
-            Grouping(inner_expr) => self.synthesize(inner_expr),
+            Grouping(inner_expr) => self.synthesize(scope_id, inner_expr),
             Literal(literal) => {
-                let literal_type_id = self.synthesize_literal_type(literal)?;
+                let literal_type_id = self.synthesize_literal_type(scope_id, literal)?;
                 self.declare_constraints(expr, &literal_type_id)?;
                 Ok(literal_type_id.into())
             }
@@ -158,13 +163,13 @@ impl<'a> TypeChecker<'a> {
                 Ok(EMBEDDED_TYPES.boolean.into())
             }
             Binary(lhs, op, rhs) if op.is_comparison() => {
-                let lhs_type = self.synthesize(lhs)?;
+                let lhs_type = self.synthesize(scope_id, lhs)?;
                 self.check(rhs, lhs_type)?;
                 self.declare_constraints(expr, &Exact(EMBEDDED_TYPES.boolean))?;
                 Ok(EMBEDDED_TYPES.boolean.into())
             }
             Binary(lhs, op, rhs) if op.is_arithmetic() => {
-                let lhs_type = self.synthesize(lhs)?;
+                let lhs_type = self.synthesize(scope_id, lhs)?;
                 let constraints = self.check(rhs, lhs_type)?;
                 self.declare_constraints(expr, &constraints)?;
                 Ok(constraints)
@@ -182,21 +187,246 @@ impl<'a> TypeChecker<'a> {
                 Ok(expr_type)
             }
             IndexOperator(container, indexer) => {
-                let container_type = self.synthesize(container)?;
+                let container_type = self.synthesize(scope_id, container)?;
                 // Indexer always assumed as uIntSize!
                 self.check(indexer, Exact(EMBEDDED_TYPES.uIntSize))?;
 
-                // let element_type = match container.kind.as_ref() {};
+                let TypeInfo::NeedsInfer(type_bounds) = container_type else {
+                    unreachable!("Exact types are not expected in synthesis mode!");
+                };
 
-                unimplemented!()
+                // Check for the clone later
+                Ok(type_bounds
+                    .borrow()
+                    .type_arguments
+                    .first()
+                    .cloned()
+                    .expect("Type arguments needed!"))
             }
             Call {
                 caller,
                 callee: None,
+                args,
+                block,
                 ..
             } => {
-                // Get binding and resolve it
-                unimplemented!()
+                let block_type = if let Some(block) = block {
+                    Some(self.synthesize(scope_id, block)?)
+                } else {
+                    None
+                };
+
+                let (binding_id, resolve_status) = self.find_binding(scope_id, caller);
+
+                let arg_types: TypeResult<Vec<TypeInfo>> = args
+                    .iter()
+                    .map(|arg| self.synthesize(scope_id, arg))
+                    .collect();
+                let arg_types = arg_types?;
+
+                let binding = self
+                    .hierarchy
+                    .scope_hierarchy
+                    .bindings
+                    .get(&binding_id)
+                    .expect("Binding must exist!");
+
+                use scope::ResolvedReferenceStatus;
+                match resolve_status {
+                    ResolvedReferenceStatus::Ok => {
+                        use SyntaxNode::*;
+                        match binding.node {
+                            Root => unreachable!(),
+                            Class(syntax::Class { name, .. }) => {
+                                // Synthesized Class is a type that contains the constructors as methods
+                                // Declared class is a type is supertype of variant types
+                                // So, there might be a problem in here later
+                                let origin_type_id = self
+                                    .hierarchy
+                                    .name_to_origin_id
+                                    .get(name)
+                                    .copied()
+                                    .expect("Class must exist");
+
+                                if !arg_types.is_empty() {
+                                    Err(TypeError {
+                                        kind: TypeErrorKind::ParameterFailure,
+                                        message: "Generic types are not yet supported",
+                                        type_id: origin_type_id,
+                                        span: expr.span.clone(),
+                                    })
+                                } else {
+                                    Ok(TypeInfo::Exact(origin_type_id))
+                                }
+                            }
+                            Constructor(
+                                syntax::Class {
+                                    name: class_name, ..
+                                },
+                                (name, params),
+                            ) => {
+                                let origin_type_id = self
+                                    .hierarchy
+                                    .name_to_origin_id
+                                    .get(class_name)
+                                    .copied()
+                                    .expect("Class must exist");
+
+                                let variant_id = self
+                                    .hierarchy
+                                    .variants_of_origin
+                                    .get(&origin_type_id)
+                                    .expect("Class must exist!")
+                                    .get(name)
+                                    .copied()
+                                    .expect("Variant must exist!");
+
+                                let param_types: TypeResult<Vec<TypeInfo>> = params
+                                    .iter()
+                                    .map(|param| {
+                                        self.extract_type_declaration(scope_id, &param.value)
+                                    })
+                                    .collect();
+                                let param_types = param_types?;
+
+                                if arg_types == param_types {
+                                    Ok(TypeInfo::Exact(variant_id))
+                                } else if arg_types.len() != param_types.len() {
+                                    Err(TypeError {
+                                        kind: TypeErrorKind::ParameterFailure,
+                                        message: "Argument does not have same number of parameters",
+                                        type_id: variant_id,
+                                        span: expr.span.clone(),
+                                    })
+                                } else {
+                                    Err(TypeError {
+                                        kind: TypeErrorKind::ParameterFailure,
+                                        message: "Argument types do not match parameter types",
+                                        type_id: variant_id,
+                                        span: expr.span.clone(),
+                                    })
+                                }
+                            }
+                            Function(function) => {
+                                let param_types: TypeResult<Vec<TypeInfo>> = function
+                                    .params
+                                    .iter()
+                                    .map(|param| {
+                                        self.extract_type_declaration(scope_id, &param.value)
+                                    })
+                                    .collect();
+                                let param_types = param_types?;
+
+                                if arg_types == param_types {
+                                    if let Some(return_type_expr) = function.return_type.as_ref() {
+                                        let return_type = self
+                                            .extract_type_declaration(scope_id, return_type_expr)?;
+
+                                        Ok(return_type)
+                                    } else {
+                                        let mut type_bounds = TypeBounds::default().callable();
+
+                                        if block.is_some() {
+                                            type_bounds = type_bounds.accepts_block();
+                                        }
+
+                                        Ok(TypeInfo::needs_infer(type_bounds))
+                                    }
+                                } else if arg_types.len() != param_types.len() {
+                                    Err(TypeError {
+                                        kind: TypeErrorKind::ParameterFailure,
+                                        message: "Argument does not have same number of parameters",
+                                        type_id: TypeId(0),
+                                        span: expr.span.clone(),
+                                    })
+                                } else {
+                                    Err(TypeError {
+                                        kind: TypeErrorKind::ParameterFailure,
+                                        message: "Argument types do not match parameter types",
+                                        type_id: TypeId(0),
+                                        span: expr.span.clone(),
+                                    })
+                                }
+                            }
+                            Pattern(syntax::Pattern {
+                                value, condition, ..
+                            }) => {
+                                if let Some(condition) = condition {
+                                    self.check(condition, Exact(EMBEDDED_TYPES.boolean))?;
+                                }
+
+                                let pattern_type =
+                                    self.extract_type_declaration(scope_id, value)?;
+
+                                if let Exact(pattern_type) = pattern_type && pattern_type == EMBEDDED_TYPES.function {
+                                    unimplemented!("Pattern callables are another beast")
+                                } else {
+                                    Ok(pattern_type)
+                                }
+                            }
+                            Method(_) => {
+                                unreachable!("Method can not delivered with `Ok` Reference")
+                            }
+                            Expression(_) => {
+                                unreachable!("Unnamed syntax nodes are not expected!")
+                            }
+                        }
+                    }
+                    ResolvedReferenceStatus::CheckOverload => {
+                        let SyntaxNode::Method(overloads) = binding.node else {
+                            unreachable!("It should be filtered at scope analysis!");
+                        };
+
+                        if overloads.len() == 1 {
+                            unimplemented!()
+                        } else if arg_types
+                            .iter()
+                            .all(|arg_type| arg_type.as_exact().is_some())
+                        {
+                            let mut overload_selection = None;
+                            for method in overloads {
+                                let param_types: TypeResult<Vec<TypeInfo>> = method
+                                    .params
+                                    .iter()
+                                    .map(|param| {
+                                        self.extract_type_declaration(scope_id, &param.value)
+                                    })
+                                    .collect();
+                                let param_types = param_types?;
+
+                                if param_types == arg_types {
+                                    if overload_selection.is_none() {
+                                        overload_selection = Some(self.extract_type_declaration(
+                                                    scope_id,
+                                                    method.return_type.as_ref().expect("Every method required to have return type declaration"),
+                                                )?);
+                                    } else {
+                                        return Err(TypeError {
+                                            kind: TypeErrorKind::OverloadFailure,
+                                            message: "Ambiguous overload candidate",
+                                            type_id: TypeId(0),
+                                            span: expr.span.clone(),
+                                        });
+                                    }
+                                }
+                            }
+
+                            if let Some(overload) = overload_selection {
+                                Ok(overload)
+                            } else {
+                                Err(TypeError {
+                                    kind: TypeErrorKind::OverloadFailure,
+                                    message: "Does not match with any candidate",
+                                    type_id: TypeId(0),
+                                    span: expr.span.clone(),
+                                })
+                            }
+                        } else {
+                            unimplemented!()
+                        }
+                    }
+                    _ => todo!(),
+                }
             }
             Call {
                 caller,
@@ -204,7 +434,7 @@ impl<'a> TypeChecker<'a> {
                 ..
             } => {
                 // Check method call
-                let receiver_ty = self.synthesize(receiver)?;
+                let receiver_ty = self.synthesize(scope_id, receiver)?;
                 unimplemented!()
             }
             _ => unimplemented!(),
@@ -219,7 +449,11 @@ impl<'a> TypeChecker<'a> {
         unimplemented!()
     }
 
-    fn return_type(&mut self, expr: &'a syntax::Expression) -> TypeResult<TypeInfo> {
+    fn extract_type_declaration(
+        &mut self,
+        scope_id: scope::ScopeId,
+        expr: &'a syntax::Expression,
+    ) -> TypeResult<TypeInfo> {
         use syntax::ExpressionKind::*;
         use TypeInfo::Exact;
 
@@ -297,8 +531,8 @@ impl<'a> TypeChecker<'a> {
 
                 Ok(Exact(variant_id))
             }
-            Literal(literal) => Ok(self.synthesize_literal_type(literal))?,
-            Grouping(inner_expr) => self.return_type(&inner_expr),
+            Literal(literal) => Ok(self.synthesize_literal_type(scope_id, literal))?,
+            Grouping(inner_expr) => self.extract_type_declaration(scope_id, &inner_expr),
             _ => {
                 return Err(TypeError {
                     kind: TypeErrorKind::InvalidType,
@@ -310,7 +544,11 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    fn synthesize_literal_type(&mut self, literal: &'a syntax::Literal) -> TypeResult<TypeInfo> {
+    fn synthesize_literal_type(
+        &mut self,
+        scope_id: scope::ScopeId,
+        literal: &'a syntax::Literal,
+    ) -> TypeResult<TypeInfo> {
         use syntax::Literal::*;
         use TypeInfo::*;
 
@@ -348,7 +586,7 @@ impl<'a> TypeChecker<'a> {
             LiteralList(expr_list) => {
                 if let Some(expr) = expr_list.front() {
                     let type_constraints = {
-                        let mut type_constraints = self.synthesize(expr)?;
+                        let mut type_constraints = self.synthesize(scope_id, expr)?;
 
                         for expr in expr_list.iter().skip(1) {
                             type_constraints = self.check(expr, type_constraints)?;
@@ -367,7 +605,7 @@ impl<'a> TypeChecker<'a> {
             LiteralArray(expr_array) => {
                 if let Some(expr) = expr_array.get(0) {
                     let type_constraints = {
-                        let mut type_constraints = self.synthesize(expr)?;
+                        let mut type_constraints = self.synthesize(scope_id, expr)?;
 
                         for expr in expr_array.iter().skip(1) {
                             type_constraints = self.check(expr, type_constraints)?;
@@ -614,5 +852,23 @@ impl<'a> TypeChecker<'a> {
             self.expr_to_parent.insert(expr_id, expr_id);
             self.rank.insert(expr_id, 0);
         }
+    }
+
+    fn find_binding(
+        &self,
+        scope_id: scope::ScopeId,
+        binding_name: &Rc<String>,
+    ) -> (scope::BindingId, scope::ResolvedReferenceStatus) {
+        let scope = self
+            .hierarchy
+            .scope_hierarchy
+            .scopes
+            .get(&scope_id)
+            .expect("Scope must exist");
+        scope
+            .resolved_references
+            .get(&binding_name.into())
+            .copied()
+            .expect("Binding must exist")
     }
 }

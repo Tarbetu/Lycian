@@ -11,7 +11,7 @@ use std::rc::Rc;
 pub use binding::{Binding, BindingKind};
 pub use error::ScopeResult;
 pub use hierarchy::Hierarchy;
-pub use scope::Scope;
+pub use scope::{ResolvedReferenceStatus, Scope};
 
 #[derive(Synonym)]
 pub struct ExprId(pub usize);
