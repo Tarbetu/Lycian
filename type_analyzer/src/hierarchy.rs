@@ -3,8 +3,8 @@ mod embedded_types;
 use crate::definition::*;
 pub use embedded_types::*;
 use std::collections::{HashMap, HashSet};
-use std::rc::Rc;
 use std::mem::discriminant;
+use std::rc::Rc;
 
 pub struct Hierarchy<'a> {
     pub types: HashMap<TypeId, TypeDefinition<'a>>,
@@ -20,10 +20,9 @@ pub struct Hierarchy<'a> {
     pub type_instances: HashMap<TypeId, HashMap<Rc<Vec<TypeId>>, TypeId>>,
     pub scope_hierarchy: scope::Hierarchy<'a>,
     pub responds_to_table: HashMap<Rc<String>, TypeId>,
-    pub call_table: HashMap<scope::ExprId, (scope::BindingId, TypeId)>,
 
     // TODO: Clean the cache after everything is done
-    supertype_cache: HashMap<(TypeId, TypeId), bool>
+    supertype_cache: HashMap<(TypeId, TypeId), bool>,
 }
 
 #[derive(Default)]
@@ -49,9 +48,8 @@ impl<'a> Hierarchy<'a> {
             scope_hierarchy,
             responds_to_table: HashMap::new(),
             binding_to_type: HashMap::new(),
-            call_table: HashMap::new(),
             ancestors: HashMap::new(),
-            supertype_cache: HashMap::new()
+            supertype_cache: HashMap::new(),
         }
         .install_embedded_types()
         .install_custom_types()
@@ -86,30 +84,42 @@ impl<'a> Hierarchy<'a> {
 
         let type_def = self.types.get(&id).expect("Origin type expected!");
 
-        let type_instances = self
-            .type_instances
-            .entry(origin_id)
-            .or_default();
-
+        let type_instances = self.type_instances.entry(origin_id).or_default();
 
         type_instances.insert(type_def.type_args().clone(), type_def.id());
 
         id
     }
 
-    pub(crate) fn is_supertype(
-        &mut self,
-        super_type_id: TypeId,
-        sub_type_id: TypeId,
-    ) -> bool {
-        if let Some(value) = self.supertype_cache.get(&(super_type_id, sub_type_id)).copied() {
+    pub(crate) fn is_supertype(&mut self, super_type_id: TypeId, sub_type_id: TypeId) -> bool {
+        if let Some(value) = self
+            .supertype_cache
+            .get(&(super_type_id, sub_type_id))
+            .copied()
+        {
             value
         } else {
             let super_type = self.types.get(&super_type_id).expect("Type must exist!");
             let sub_type = self.types.get(&sub_type_id).expect("Type must exist!");
             let result = self.check_supertype(super_type, sub_type, &mut HashSet::new());
-            self.supertype_cache.insert((super_type_id, sub_type_id), result);
+            self.supertype_cache
+                .insert((super_type_id, sub_type_id), result);
             result
+        }
+    }
+
+    pub(crate) fn find_method(
+        &self,
+        scope_id: scope::ScopeId,
+        method_name: &Rc<String>,
+    ) -> Option<scope::BindingId> {
+        let scope = self.scope_hierarchy.scopes.get(&scope_id).expect("Scope does not exist");
+
+        use scope::SyntaxNode::*;
+        match &scope.node {
+            Root => None,
+            Class(_) => scope.bindings.get(&method_name.into()).cloned(),
+            _ => self.find_method(scope_id, method_name)
         }
     }
 
@@ -143,7 +153,9 @@ impl<'a> Hierarchy<'a> {
             TypeDefinition::Origin {
                 id: super_type_id, ..
             },
-            TypeDefinition::Origin { id: sub_type_id, .. },
+            TypeDefinition::Origin {
+                id: sub_type_id, ..
+            },
         ) = (super_type, sub_type)
             && self.is_parent(*super_type_id, *sub_type_id)
         {
@@ -200,8 +212,7 @@ impl<'a> Hierarchy<'a> {
                             visited.insert((*super_type_id, *sub_type_id));
                             let super_type = self.types.get(super_type_id).unwrap();
                             let sub_type = self.types.get(sub_type_id).unwrap();
-                            let result =
-                                self.check_supertype(super_type, sub_type, visited);
+                            let result = self.check_supertype(super_type, sub_type, visited);
                             visited.remove(&(*super_type_id, *sub_type_id));
                             result
                         },
@@ -221,8 +232,8 @@ impl<'a> Hierarchy<'a> {
                 origin_id: sub_origin_id,
                 args: sub_args,
                 ..
-            }
-                ) = (super_type, sub_type)
+            },
+        ) = (super_type, sub_type)
             && discriminant(super_type) == discriminant(sub_type)
             && super_origin_id == sub_origin_id
             && (super_args.starts_with(sub_args)
@@ -232,8 +243,7 @@ impl<'a> Hierarchy<'a> {
                             visited.insert((*super_type_id, *sub_type_id));
                             let super_type = self.types.get(super_type_id).unwrap();
                             let sub_type = self.types.get(sub_type_id).unwrap();
-                            let result =
-                                self.check_supertype(super_type, sub_type, visited);
+                            let result = self.check_supertype(super_type, sub_type, visited);
                             visited.remove(&(*super_type_id, *sub_type_id));
                             result
                         },
@@ -248,7 +258,12 @@ impl<'a> Hierarchy<'a> {
     fn is_parent(&self, super_type_id: TypeId, sub_type_id: TypeId) -> bool {
         let ancestors = self.ancestors.get(&sub_type_id).expect("Type must exist!");
 
-        !ancestors.is_empty() && (ancestors.contains(&super_type_id) || ancestors.iter().copied().any(|ancestor_id| self.is_parent(super_type_id, ancestor_id)))
+        !ancestors.is_empty()
+            && (ancestors.contains(&super_type_id)
+                || ancestors
+                    .iter()
+                    .copied()
+                    .any(|ancestor_id| self.is_parent(super_type_id, ancestor_id)))
     }
 
     fn install_embedded_types(mut self) -> Self {

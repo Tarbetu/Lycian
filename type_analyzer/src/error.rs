@@ -27,6 +27,7 @@ pub enum TypeErrorKind {
     CyclicDependency,
     OverloadFailure,
     ParameterFailure,
+    UnboundSymbol,
     Multiple(Vec<TypeError>),
 }
 
@@ -46,6 +47,7 @@ impl fmt::Display for TypeErrorKind {
             TypeErrorKind::CyclicDependency => write!(f, "Cyclic Dependency"),
             TypeErrorKind::OverloadFailure => write!(f, "Overload Failure"),
             TypeErrorKind::ParameterFailure => write!(f, "Parameter Failure"),
+            TypeErrorKind::UnboundSymbol => write!(f, "Unbound Symbol"),
             TypeErrorKind::Multiple(errors) => {
                 writeln!(f, "Multiple type errors:")?;
                 for error in errors {
