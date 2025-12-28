@@ -28,6 +28,7 @@ pub enum TypeErrorKind {
     OverloadFailure,
     ParameterFailure,
     UnboundSymbol,
+    InvalidMethodCall,
     Multiple(Vec<TypeError>),
 }
 
@@ -48,6 +49,7 @@ impl fmt::Display for TypeErrorKind {
             TypeErrorKind::OverloadFailure => write!(f, "Overload Failure"),
             TypeErrorKind::ParameterFailure => write!(f, "Parameter Failure"),
             TypeErrorKind::UnboundSymbol => write!(f, "Unbound Symbol"),
+            TypeErrorKind::InvalidMethodCall => write!(f, "Invalid method call"),
             TypeErrorKind::Multiple(errors) => {
                 writeln!(f, "Multiple type errors:")?;
                 for error in errors {

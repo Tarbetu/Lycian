@@ -1,33 +1,34 @@
 use super::*;
 use std::cell::RefCell;
 use std::collections::HashSet;
+use std::mem::take;
 use std::rc::Rc;
 
 #[derive(PartialEq, Clone)]
-pub enum TypeInfo {
+pub enum TypeConstraint {
     Exact(TypeId),
     NeedsInfer(Rc<RefCell<TypeBounds>>),
 }
 
-impl Default for TypeInfo {
+impl Default for TypeConstraint {
     fn default() -> Self {
-        TypeInfo::NeedsInfer(Rc::default())
+        TypeConstraint::NeedsInfer(Rc::default())
     }
 }
 
-impl From<TypeId> for TypeInfo {
+impl From<TypeId> for TypeConstraint {
     fn from(type_id: TypeId) -> Self {
-        TypeInfo::Exact(type_id)
+        TypeConstraint::Exact(type_id)
     }
 }
 
-impl TypeInfo {
+impl TypeConstraint {
     pub fn needs_infer(type_bounds: TypeBounds) -> Self {
-        TypeInfo::NeedsInfer(Rc::new(RefCell::new(type_bounds)))
+        TypeConstraint::NeedsInfer(Rc::new(RefCell::new(type_bounds)))
     }
 
     pub fn as_exact(&self) -> Option<TypeId> {
-        if let TypeInfo::Exact(type_id) = self {
+        if let TypeConstraint::Exact(type_id) = self {
             Some(*type_id)
         } else {
             None
@@ -42,7 +43,7 @@ pub struct TypeBounds {
     pub lower_bounds: HashSet<TypeId>,
 
     // -- It will passed as a argument to the type instance
-    pub type_arguments: Vec<TypeInfo>,
+    pub type_arguments: Vec<TypeConstraint>,
 
     // -- Trait Constraints
     pub must_be_numeric: bool,
@@ -58,6 +59,7 @@ pub struct TypeBounds {
 
     // -- Relational Constraints (If it's deferred)
     pub result_of: Vec<scope::BindingId>,
+    pub callee: Option<TypeConstraint>,
     pub responds_to: HashSet<syntax::PatternName>,
     pub super_call: Option<syntax::PatternName>,
 }
@@ -73,7 +75,7 @@ impl TypeBounds {
         self
     }
 
-    pub fn with_argument(mut self, info: TypeInfo) -> Self {
+    pub fn with_argument(mut self, info: TypeConstraint) -> Self {
         self.type_arguments.push(info);
         self
     }
@@ -125,18 +127,26 @@ impl TypeBounds {
         self
     }
 
-    pub fn merge(mut self, other: Self) -> Self {
-        self.upper_bounds.extend(other.upper_bounds);
-        self.lower_bounds.extend(other.lower_bounds);
+    pub fn merge(&mut self, other: Rc<RefCell<Self>>) {
+        let mut other = other.borrow_mut();
+        self.upper_bounds.extend(take(&mut other.upper_bounds));
+        self.lower_bounds.extend(take(&mut other.lower_bounds));
         self.must_be_numeric |= other.must_be_numeric;
         self.must_be_addable |= other.must_be_addable;
         self.must_be_integer |= other.must_be_integer;
         self.must_be_floating |= other.must_be_floating;
         self.must_be_callable |= other.must_be_callable;
         self.must_accept_block |= other.must_accept_block;
-        self.result_of.extend(other.result_of);
-        self.responds_to.extend(other.responds_to);
-        self.super_call = self.super_call.or(other.super_call);
-        self
+        self.result_of.extend(take(&mut other.result_of));
+
+        if self.callee.is_none() {
+            self.callee = take(&mut other.callee);
+        }
+
+        self.responds_to.extend(take(&mut other.responds_to));
+
+        if self.super_call.is_none() {
+            self.super_call = take(&mut other.super_call);
+        }
     }
 }

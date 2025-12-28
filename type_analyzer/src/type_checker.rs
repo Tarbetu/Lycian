@@ -17,14 +17,14 @@ pub(crate) struct TypeChecker<'a> {
     expr_to_parent: HashMap<ExprId, ExprId>,
 
     // Roots expressions to type
-    root_to_type: HashMap<ExprId, TypeInfo>,
+    root_to_type: HashMap<ExprId, TypeConstraint>,
 
     // Union by rank
     // Root to type
     rank: HashMap<ExprId, usize>,
 
     // For optimization
-    empty_type_info: TypeInfo,
+    empty_type_constraint: TypeConstraint,
 
     // Instead of stopping at the first concrete type error, just collect them
     early_errors: Vec<TypeError>,
@@ -41,7 +41,7 @@ impl<'a> TypeChecker<'a> {
             expr_to_parent: HashMap::new(),
             root_to_type: HashMap::new(),
             rank: HashMap::new(),
-            empty_type_info: TypeInfo::default(),
+            empty_type_constraint: TypeConstraint::default(),
             early_errors: Vec::new(),
             method_overload_types: HashMap::new(),
         }
@@ -51,7 +51,7 @@ impl<'a> TypeChecker<'a> {
         self.traverse_classes(0)
     }
 
-    pub fn get_type(&mut self, expr: &syntax::Expression) -> &TypeInfo {
+    pub fn get_type(&mut self, expr: &syntax::Expression) -> &TypeConstraint {
         let root_expr = self.find_root(ExprId(expr.id));
         self.lookup_for_type_of_root(root_expr)
     }
@@ -109,7 +109,7 @@ impl<'a> TypeChecker<'a> {
             match child_scope.node {
                 Constructor(..) => {}
                 Function(method) => {
-                    let TypeInfo::Exact(type_id) = self.extract_type_declaration(
+                    let TypeConstraint::Exact(type_id) = self.extract_type_declaration(
                         class_scope_id,
                         class_scope_id,
                         method
@@ -121,7 +121,7 @@ impl<'a> TypeChecker<'a> {
                         unreachable!()
                     };
 
-                    if let Err(err) = self.check(&method.body, TypeInfo::Exact(type_id)) {
+                    if let Err(err) = self.check(&method.body, TypeConstraint::Exact(type_id)) {
                         self.errors.push(err);
                     }
 
@@ -147,54 +147,54 @@ impl<'a> TypeChecker<'a> {
         class_scope_id: scope::ScopeId,
         scope_id: scope::ScopeId,
         expr: &'a syntax::Expression,
-    ) -> TypeResult<TypeInfo> {
-        use TypeInfo::*;
+    ) -> TypeResult<TypeConstraint> {
+        use TypeConstraint::*;
         use syntax::ExpressionKind::*;
 
         match expr.kind.as_ref() {
             Grouping(inner_expr) => self.synthesize(class_scope_id, scope_id, inner_expr),
             Literal(literal) => {
                 let literal_type_id =
-                    self.synthesize_literal_type(class_scope_id, scope_id, literal)?;
-                self.declare_constraints(expr, &literal_type_id)?;
-                Ok(literal_type_id.into())
+                    self.synthesize_literal_type(expr, class_scope_id, scope_id, literal)?;
+                Ok(self.declare_type(expr, literal_type_id)?)
             }
             Binary(lhs, op, rhs) if op.is_logical() => {
                 self.check(lhs, Exact(EMBEDDED_TYPES.boolean))?;
                 self.check(rhs, Exact(EMBEDDED_TYPES.boolean))?;
-                self.declare_constraints(expr, &Exact(EMBEDDED_TYPES.boolean))?;
+                self.declare_type(expr, Exact(EMBEDDED_TYPES.boolean))?;
                 Ok(EMBEDDED_TYPES.boolean.into())
             }
             Binary(lhs, op, rhs) if op.is_comparison() => {
                 let lhs_type = self.synthesize(class_scope_id, scope_id, lhs)?;
                 self.check(rhs, lhs_type)?;
-                self.declare_constraints(expr, &Exact(EMBEDDED_TYPES.boolean))?;
+                self.declare_type(expr, Exact(EMBEDDED_TYPES.boolean))?;
+                self.declare_similarity(lhs, rhs)?;
                 Ok(EMBEDDED_TYPES.boolean.into())
             }
             Binary(lhs, op, rhs) if op.is_arithmetic() => {
                 let lhs_type = self.synthesize(class_scope_id, scope_id, lhs)?;
                 let constraints = self.check(rhs, lhs_type)?;
-                self.declare_constraints(expr, &constraints)?;
+                self.declare_similarity(lhs, rhs)?;
+                self.declare_similarity(lhs, expr)?;
                 Ok(constraints)
             }
             Binary(..) => unreachable!(),
             Unary(syntax::Operator::Not, inner_expr) => {
                 self.check(inner_expr, Exact(EMBEDDED_TYPES.boolean))?;
-                self.declare_constraints(expr, &Exact(EMBEDDED_TYPES.boolean))?;
+                self.declare_type(expr, Exact(EMBEDDED_TYPES.boolean))?;
                 Ok(EMBEDDED_TYPES.boolean.into())
             }
             Unary(syntax::Operator::Negate, inner_expr) => {
-                let expected_type = TypeInfo::needs_infer(TypeBounds::default().numeric());
+                let expected_type = TypeConstraint::needs_infer(TypeBounds::default().numeric());
                 let expr_type = self.check(inner_expr, expected_type)?;
-                self.declare_constraints(expr, &expr_type)?;
-                Ok(expr_type)
+                Ok(self.declare_type(expr, expr_type)?)
             }
             IndexOperator(container, indexer) => {
                 let container_type = self.synthesize(class_scope_id, scope_id, container)?;
                 // Indexer always assumed as uIntSize!
                 self.check(indexer, Exact(EMBEDDED_TYPES.uIntSize))?;
 
-                let TypeInfo::NeedsInfer(type_bounds) = container_type else {
+                let TypeConstraint::NeedsInfer(type_bounds) = container_type else {
                     unreachable!("Exact types are not expected in synthesis mode!");
                 };
 
@@ -223,7 +223,7 @@ impl<'a> TypeChecker<'a> {
 
                 let (binding_id, resolve_status) = self.find_binding(scope_id, caller);
 
-                let arg_types: TypeResult<Vec<TypeInfo>> = args
+                let arg_types: TypeResult<Vec<TypeConstraint>> = args
                     .iter()
                     .map(|arg| self.synthesize(class_scope_id, scope_id, arg))
                     .collect();
@@ -261,7 +261,7 @@ impl<'a> TypeChecker<'a> {
                                         span: expr.span.clone(),
                                     })
                                 } else {
-                                    Ok(TypeInfo::Exact(origin_type_id))
+                                    Ok(TypeConstraint::Exact(origin_type_id))
                                 }
                             }
                             Constructor(
@@ -279,7 +279,7 @@ impl<'a> TypeChecker<'a> {
                                 &expr.span,
                             ),
                             Function(function) => {
-                                let param_types: TypeResult<Vec<TypeInfo>> = function
+                                let param_types: TypeResult<Vec<TypeConstraint>> = function
                                     .params
                                     .iter()
                                     .map(|param| {
@@ -308,7 +308,7 @@ impl<'a> TypeChecker<'a> {
                                             type_bounds = type_bounds.accepts_block();
                                         }
 
-                                        Ok(TypeInfo::needs_infer(type_bounds))
+                                        Ok(TypeConstraint::needs_infer(type_bounds))
                                     }
                                 } else if arg_types.len() != param_types.len() {
                                     Err(TypeError {
@@ -358,6 +358,7 @@ impl<'a> TypeChecker<'a> {
                         };
 
                         self.synthesize_method_call(
+                            expr,
                             overloads,
                             binding_id,
                             scope_id,
@@ -385,7 +386,7 @@ impl<'a> TypeChecker<'a> {
                                     },
                                     (constructor_name, params),
                                 ) => self.synthesize_constructor_call(
-                                    &class_name,
+                                    class_name,
                                     constructor_name,
                                     scope_id,
                                     class_scope_id,
@@ -394,6 +395,7 @@ impl<'a> TypeChecker<'a> {
                                     &expr.span,
                                 ),
                                 Method(overloads) => self.synthesize_method_call(
+                                    expr,
                                     overloads,
                                     binding_id,
                                     scope_id,
@@ -422,9 +424,18 @@ impl<'a> TypeChecker<'a> {
                 callee: Some(receiver),
                 ..
             } => {
-                // Check method call
-                let receiver_ty = self.synthesize(class_scope_id, scope_id, receiver)?;
-                unimplemented!()
+                let receiver_type_info = self.synthesize(class_scope_id, scope_id, receiver)?;
+
+                match receiver_type_info {
+                    Exact(receiver_type_id) => self.extract_type_from_method(
+                        expr.id,
+                        class_scope_id,
+                        caller,
+                        receiver_type_id,
+                        &expr.span,
+                    ),
+                    NeedsInfer(_bounds) => todo!(),
+                }
             }
             _ => unimplemented!(),
         }
@@ -433,8 +444,8 @@ impl<'a> TypeChecker<'a> {
     fn check(
         &mut self,
         expr: &syntax::Expression,
-        expected_type: TypeInfo,
-    ) -> TypeResult<TypeInfo> {
+        expected_type: TypeConstraint,
+    ) -> TypeResult<TypeConstraint> {
         unimplemented!()
     }
 
@@ -443,8 +454,8 @@ impl<'a> TypeChecker<'a> {
         class_scope_id: scope::ScopeId,
         scope_id: scope::ScopeId,
         expr: &'a syntax::Expression,
-    ) -> TypeResult<TypeInfo> {
-        use TypeInfo::Exact;
+    ) -> TypeResult<TypeConstraint> {
+        use TypeConstraint::Exact;
         use syntax::ExpressionKind::*;
 
         match expr.kind.as_ref() {
@@ -520,103 +531,124 @@ impl<'a> TypeChecker<'a> {
                 Ok(Exact(variant_id))
             }
             Literal(literal) => {
-                Ok(self.synthesize_literal_type(class_scope_id, scope_id, literal))?
+                self.synthesize_literal_type(expr, class_scope_id, scope_id, literal)
             }
             Grouping(inner_expr) => {
-                self.extract_type_declaration(class_scope_id, scope_id, &inner_expr)
+                self.extract_type_declaration(class_scope_id, scope_id, inner_expr)
             }
-            _ => {
-                return Err(TypeError {
-                    kind: TypeErrorKind::InvalidType,
-                    message: "Invalid return type",
-                    type_id: TypeId(0),
-                    span: expr.span.clone(),
-                });
-            }
+            _ => Err(TypeError {
+                kind: TypeErrorKind::InvalidType,
+                message: "Invalid return type",
+                type_id: TypeId(0),
+                span: expr.span.clone(),
+            }),
         }
     }
 
     fn synthesize_literal_type(
         &mut self,
+        expr: &syntax::Expression,
         class_scope_id: scope::ScopeId,
         scope_id: scope::ScopeId,
         literal: &'a syntax::Literal,
-    ) -> TypeResult<TypeInfo> {
-        use TypeInfo::*;
+    ) -> TypeResult<TypeConstraint> {
+        use TypeConstraint::*;
         use syntax::Literal::*;
 
         match literal {
-            Integer(_) => Ok(TypeInfo::needs_infer(TypeBounds::default().integer())),
-            Float(_) => Ok(TypeInfo::needs_infer(TypeBounds::default().floating())),
-            Boolean(true) => Ok(Exact(EMBEDDED_TYPES.literal_true)),
-            Boolean(false) => Ok(Exact(EMBEDDED_TYPES.literal_false)),
-            Char(_) => match self.hierarchy.literal_types.chars.get(literal).copied() {
-                Some(type_id) => Ok(Exact(type_id)),
-                None => {
-                    let type_id = self.hierarchy.next_id();
-                    let type_def = TypeDefinition::Literal {
-                        id: type_id,
-                        origin_id: EMBEDDED_TYPES.char,
-                        node: literal,
+            Integer(_) => Ok(self.declare_type(
+                expr,
+                TypeConstraint::needs_infer(TypeBounds::default().integer()),
+            )?),
+            Float(_) => Ok(self.declare_type(
+                expr,
+                TypeConstraint::needs_infer(TypeBounds::default().floating()),
+            )?),
+            Boolean(true) => Ok(self.declare_type(expr, EMBEDDED_TYPES.literal_true.into())?),
+            Boolean(false) => Ok(self.declare_type(expr, EMBEDDED_TYPES.literal_false.into())?),
+            Char(_) => {
+                let type_constraint = match self.hierarchy.literal_types.chars.get(literal).copied()
+                {
+                    Some(type_id) => Exact(type_id),
+                    None => {
+                        let type_id = self.hierarchy.next_id();
+                        let type_def = TypeDefinition::Literal {
+                            id: type_id,
+                            origin_id: EMBEDDED_TYPES.char,
+                            node: literal,
+                        };
+                        self.hierarchy.types.insert(type_id, type_def);
+                        Exact(type_id)
+                    }
+                };
+
+                Ok(self.declare_type(expr, type_constraint)?)
+            }
+            Str(_) => {
+                let type_constraint =
+                    match self.hierarchy.literal_types.strings.get(literal).copied() {
+                        Some(type_id) => Exact(type_id),
+                        None => {
+                            let type_id = self.hierarchy.next_id();
+                            let type_def = TypeDefinition::Literal {
+                                id: type_id,
+                                origin_id: EMBEDDED_TYPES.string,
+                                node: literal,
+                            };
+                            self.hierarchy.types.insert(type_id, type_def);
+                            Exact(type_id)
+                        }
                     };
-                    self.hierarchy.types.insert(type_id, type_def);
-                    Ok(Exact(type_id))
-                }
-            },
-            Str(_) => match self.hierarchy.literal_types.strings.get(literal).copied() {
-                Some(type_id) => Ok(Exact(type_id)),
-                None => {
-                    let type_id = self.hierarchy.next_id();
-                    let type_def = TypeDefinition::Literal {
-                        id: type_id,
-                        origin_id: EMBEDDED_TYPES.string,
-                        node: literal,
-                    };
-                    self.hierarchy.types.insert(type_id, type_def);
-                    Ok(Exact(type_id))
-                }
-            },
+
+                Ok(self.declare_type(expr, type_constraint)?)
+            }
             LiteralList(expr_list) => {
-                if let Some(expr) = expr_list.front() {
+                let type_constraint = if let Some(first_expr) = expr_list.front() {
                     let type_constraints = {
                         let mut type_constraints =
-                            self.synthesize(class_scope_id, scope_id, expr)?;
+                            self.synthesize(class_scope_id, scope_id, first_expr)?;
 
                         for expr in expr_list.iter().skip(1) {
                             type_constraints = self.check(expr, type_constraints)?;
+                            self.declare_similarity(first_expr, expr)?;
                         }
 
                         type_constraints
                     };
 
-                    Ok(TypeInfo::needs_infer(
+                    TypeConstraint::needs_infer(
                         TypeBounds::default().list().with_argument(type_constraints),
-                    ))
+                    )
                 } else {
-                    Ok(TypeInfo::needs_infer(TypeBounds::default().list()))
-                }
+                    TypeConstraint::needs_infer(TypeBounds::default().list())
+                };
+
+                Ok(self.declare_type(expr, type_constraint)?)
             }
             LiteralArray(expr_array) => {
-                if let Some(expr) = expr_array.get(0) {
+                let type_contraint = if let Some(first_expr) = expr_array.first() {
                     let type_constraints = {
                         let mut type_constraints =
-                            self.synthesize(class_scope_id, scope_id, expr)?;
+                            self.synthesize(class_scope_id, scope_id, first_expr)?;
 
                         for expr in expr_array.iter().skip(1) {
                             type_constraints = self.check(expr, type_constraints)?;
+                            self.declare_similarity(first_expr, expr)?;
                         }
 
                         type_constraints
                     };
 
-                    Ok(TypeInfo::needs_infer(
+                    TypeConstraint::needs_infer(
                         TypeBounds::default()
                             .array()
                             .with_argument(type_constraints),
-                    ))
+                    )
                 } else {
-                    Ok(TypeInfo::needs_infer(TypeBounds::default().array()))
-                }
+                    TypeConstraint::needs_infer(TypeBounds::default().array())
+                };
+
+                Ok(self.declare_type(expr, type_contraint)?)
             }
         }
     }
@@ -628,9 +660,9 @@ impl<'a> TypeChecker<'a> {
         scope_id: scope::ScopeId,
         class_scope_id: scope::ScopeId,
         params: &'a [syntax::Pattern],
-        arg_types: &[TypeInfo],
+        arg_types: &[TypeConstraint],
         span: &scanner::Span,
-    ) -> TypeResult<TypeInfo> {
+    ) -> TypeResult<TypeConstraint> {
         let origin_type_id = self
             .hierarchy
             .name_to_origin_id
@@ -647,14 +679,14 @@ impl<'a> TypeChecker<'a> {
             .copied()
             .expect("Variant must exist!");
 
-        let param_types: TypeResult<Vec<TypeInfo>> = params
+        let param_types: TypeResult<Vec<TypeConstraint>> = params
             .iter()
             .map(|param| self.extract_type_declaration(scope_id, class_scope_id, &param.value))
             .collect();
         let param_types = param_types?;
 
         if arg_types == param_types {
-            Ok(TypeInfo::Exact(variant_id))
+            Ok(TypeConstraint::Exact(variant_id))
         } else if arg_types.len() != param_types.len() {
             Err(TypeError {
                 kind: TypeErrorKind::ParameterFailure,
@@ -674,17 +706,18 @@ impl<'a> TypeChecker<'a> {
 
     fn synthesize_method_call(
         &mut self,
+        expr: &syntax::Expression,
         overloads: &'a [syntax::Function],
         binding_id: scope::BindingId,
         scope_id: scope::ScopeId,
         class_scope_id: scope::ScopeId,
-        arg_types: &[TypeInfo],
+        arg_types: &[TypeConstraint],
         span: &scanner::Span,
-    ) -> TypeResult<TypeInfo> {
+    ) -> TypeResult<TypeConstraint> {
         if overloads.len() == 1 {
             let method = &overloads[0];
 
-            let param_types: TypeResult<Vec<TypeInfo>> = method
+            let param_types: TypeResult<Vec<TypeConstraint>> = method
                 .params
                 .iter()
                 .map(|param| self.extract_type_declaration(class_scope_id, scope_id, &param.value))
@@ -714,7 +747,7 @@ impl<'a> TypeChecker<'a> {
         {
             let mut overload_selection = None;
             for method in overloads {
-                let param_types: TypeResult<Vec<TypeInfo>> = method
+                let param_types: TypeResult<Vec<TypeConstraint>> = method
                     .params
                     .iter()
                     .map(|param| {
@@ -755,9 +788,12 @@ impl<'a> TypeChecker<'a> {
                 })
             }
         } else {
-            Ok(TypeInfo::needs_infer(
-                TypeBounds::default().callable().results_of(binding_id),
-            ))
+            Ok(self.declare_type(
+                expr,
+                TypeConstraint::needs_infer(
+                    TypeBounds::default().callable().results_of(binding_id),
+                ),
+            )?)
         }
     }
 
@@ -775,10 +811,10 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    fn lookup_for_type_of_root(&mut self, root_expr_id: ExprId) -> &TypeInfo {
+    fn lookup_for_type_of_root(&mut self, root_expr_id: ExprId) -> &TypeConstraint {
         self.root_to_type
             .get(&root_expr_id)
-            .unwrap_or(&self.empty_type_info)
+            .unwrap_or(&self.empty_type_constraint)
     }
 
     fn declare_similarity(
@@ -792,22 +828,20 @@ impl<'a> TypeChecker<'a> {
         if let (Some(first_exact_type), Some(second_exact_type)) = (
             self.lookup_for_type_of_root(first_root).as_exact(),
             self.lookup_for_type_of_root(second_root).as_exact(),
-        ) {
-            if !(first_exact_type != second_exact_type
-                || self
-                    .hierarchy
-                    .is_supertype(first_exact_type, second_exact_type)
-                || self
-                    .hierarchy
-                    .is_supertype(second_exact_type, first_exact_type))
-            {
-                return Err(TypeError {
-                    kind: TypeErrorKind::TypeMismatch,
-                    message: "Types are not compatible",
-                    type_id: first_exact_type,
-                    span: first_expr.span.clone(),
-                });
-            }
+        ) && !(first_exact_type != second_exact_type
+            || self
+                .hierarchy
+                .is_supertype(first_exact_type, second_exact_type)
+            || self
+                .hierarchy
+                .is_supertype(second_exact_type, first_exact_type))
+        {
+            return Err(TypeError {
+                kind: TypeErrorKind::TypeMismatch,
+                message: "Types are not compatible",
+                type_id: first_exact_type,
+                span: first_expr.span.clone(),
+            });
         }
 
         let first_rank = self.rank.get(&first_root).unwrap();
@@ -829,7 +863,7 @@ impl<'a> TypeChecker<'a> {
         self.expr_to_parent.insert(old_root, new_root);
 
         {
-            use TypeInfo::*;
+            use TypeConstraint::*;
             match (
                 self.lookup_for_type_of_root(first_root).clone(),
                 self.lookup_for_type_of_root(second_root).clone(),
@@ -845,139 +879,118 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    fn declare_constraints(
-        &mut self,
-        expr: &syntax::Expression,
-        constraints: &TypeInfo,
-    ) -> TypeResult<()> {
-        // use TypeInfo::*;
-        // let expr_id = ExprId(expr.id);
-        // let root = self.find_root(expr_id);
-
-        // match self.root_to_type.get(&root) {
-        //     Some(Exact(existing_type))
-        //         if *existing_type == inferred_type_id
-        //             || self
-        //                 .hierarchy
-        //                 .is_supertype(*existing_type, inferred_type_id) =>
-        //     {
-        //         Ok(())
-        //     }
-        //     Some(Exact(existing_type)) => Err(TypeError {
-        //         kind: TypeErrorKind::TypeMismatch,
-        //         message: "Infered type is not compatible with declared type",
-        //         type_id: *existing_type,
-        //         span: expr.span.clone(),
-        //     }),
-        //     Some(NeedsInfer(type_bounds)) => {
-        //         type_bounds
-        //             .borrow_mut()
-        //             .lower_bounds
-        //             .insert(inferred_type_id);
-
-        //         Ok(())
-        //     }
-        //     None => {
-        //         // self.root_to_type.insert(expr_id, v);
-        //         unimplemented!()
-        //         // self.root_to_type.insert(expr_id, TypeInfo::Exact(inf_id));
-        //         // Ok(())
-        //     }
-        // }
-
-        unimplemented!()
-    }
-
     fn declare_type(
         &mut self,
         expr: &syntax::Expression,
-        declared_type_id: TypeId,
-    ) -> TypeResult<()> {
-        use TypeInfo::*;
+        declared_type: TypeConstraint,
+    ) -> TypeResult<TypeConstraint> {
+        use TypeConstraint::*;
         let expr_id = ExprId(expr.id);
         let root = self.find_root(expr_id);
 
-        match self.root_to_type.remove(&root) {
-            Some(Exact(existing_type)) if existing_type == declared_type_id => {
-                self.root_to_type.insert(root, Exact(existing_type));
-                Ok(())
+        match (self.root_to_type.remove(&root), declared_type) {
+            (Some(Exact(existing_type_id)), Exact(declared_type_id)) => {
+                if existing_type_id == declared_type_id
+                    || self
+                        .hierarchy
+                        .is_supertype(existing_type_id, declared_type_id)
+                    || self
+                        .hierarchy
+                        .is_supertype(declared_type_id, existing_type_id)
+                {
+                    self.root_to_type.insert(root, existing_type_id.into());
+                    Ok(Exact(declared_type_id))
+                } else {
+                    Err(TypeError {
+                        kind: TypeErrorKind::UnexpectedType,
+                        message: "Declared type is different than the existing type",
+                        type_id: existing_type_id,
+                        span: expr.span.clone(),
+                    })
+                }
             }
-            Some(Exact(existing_type)) => Err(TypeError {
-                kind: TypeErrorKind::UnexpectedType,
-                message: "Declared type is different than the existing type",
-                type_id: existing_type,
-                span: expr.span.clone(),
-            }),
-            Some(NeedsInfer(type_bounds)) => {
+            (Some(NeedsInfer(type_bounds)), Exact(known_type_id))
+            | (Some(Exact(known_type_id)), NeedsInfer(type_bounds)) => {
                 let type_bounds = type_bounds.borrow();
                 let is_upper_bounds_empty = type_bounds.upper_bounds.is_empty();
                 let is_lower_bounds_empty = type_bounds.lower_bounds.is_empty();
 
                 if is_upper_bounds_empty && is_lower_bounds_empty {
                     // We allow casts integer to float, but not the otherwise
-                    if EMBEDDED_TYPES.is_integer(declared_type_id) && type_bounds.must_be_floating {
+                    if EMBEDDED_TYPES.is_integer(known_type_id) && type_bounds.must_be_floating {
                         Err(TypeError {
                             kind: TypeErrorKind::UnexpectedType,
                             message: "You can not cast a float to integer",
-                            type_id: declared_type_id,
+                            type_id: known_type_id,
                             span: expr.span.clone(),
                         })
                     } else {
-                        self.root_to_type.insert(expr_id, Exact(declared_type_id));
-                        Ok(())
+                        self.root_to_type.insert(expr_id, Exact(known_type_id));
+                        Ok(Exact(known_type_id))
                     }
                 } else if is_upper_bounds_empty {
-                    if type_bounds.lower_bounds.iter().copied().any(|lower_bound| {
-                        self.hierarchy.is_supertype(declared_type_id, lower_bound)
-                    }) {
-                        self.root_to_type.insert(expr_id, Exact(declared_type_id));
-                        Ok(())
+                    if type_bounds
+                        .lower_bounds
+                        .iter()
+                        .copied()
+                        .any(|lower_bound| self.hierarchy.is_supertype(known_type_id, lower_bound))
+                    {
+                        self.root_to_type.insert(expr_id, Exact(known_type_id));
+                        Ok(Exact(known_type_id))
                     } else {
                         Err(TypeError {
                             kind: TypeErrorKind::UnexpectedType,
                             message: "Declared type is not compatible with existing lower bounds",
-                            type_id: declared_type_id,
+                            type_id: known_type_id,
                             span: expr.span.clone(),
                         })
                     }
                 } else if is_lower_bounds_empty {
-                    if type_bounds.upper_bounds.iter().copied().any(|upper_bound| {
-                        self.hierarchy.is_supertype(upper_bound, declared_type_id)
-                    }) {
-                        self.root_to_type.insert(expr_id, Exact(declared_type_id));
-                        Ok(())
+                    if type_bounds
+                        .upper_bounds
+                        .iter()
+                        .copied()
+                        .any(|upper_bound| self.hierarchy.is_supertype(upper_bound, known_type_id))
+                    {
+                        self.root_to_type.insert(expr_id, Exact(known_type_id));
+                        Ok(Exact(known_type_id))
                     } else {
                         Err(TypeError {
                             kind: TypeErrorKind::UnexpectedType,
                             message: "Declared type is not compatible with existing upper bounds",
-                            type_id: declared_type_id,
+                            type_id: known_type_id,
                             span: expr.span.clone(),
                         })
                     }
                 } else {
                     let is_compatible =
                         type_bounds.lower_bounds.iter().copied().any(|lower_bound| {
-                            self.hierarchy.is_supertype(declared_type_id, lower_bound)
+                            self.hierarchy.is_supertype(known_type_id, lower_bound)
                         }) && type_bounds.upper_bounds.iter().copied().any(|upper_bound| {
-                            self.hierarchy.is_supertype(upper_bound, declared_type_id)
+                            self.hierarchy.is_supertype(upper_bound, known_type_id)
                         });
 
                     if is_compatible {
-                        self.root_to_type.insert(expr_id, Exact(declared_type_id));
-                        Ok(())
+                        self.root_to_type.insert(expr_id, Exact(known_type_id));
+                        Ok(Exact(known_type_id))
                     } else {
                         Err(TypeError {
                             kind: TypeErrorKind::UnexpectedType,
                             message: "Declared type is not compatible with existing bounds",
-                            type_id: declared_type_id,
+                            type_id: known_type_id,
                             span: expr.span.clone(),
                         })
                     }
                 }
             }
-            None => {
-                self.root_to_type.insert(expr_id, Exact(declared_type_id));
-                Ok(())
+            (Some(NeedsInfer(known_type_bounds)), NeedsInfer(declared_type_bounds)) => {
+                known_type_bounds.borrow_mut().merge(declared_type_bounds);
+                self.root_to_type.insert(expr_id, NeedsInfer(known_type_bounds.clone()));
+                Ok(NeedsInfer(known_type_bounds))
+            }
+            (None, type_knowledge) => {
+                self.root_to_type.insert(expr_id, type_knowledge.clone());
+                Ok(type_knowledge)
             }
         }
     }
@@ -1007,5 +1020,68 @@ impl<'a> TypeChecker<'a> {
             .get(&binding_name.into())
             .copied()
             .expect("Binding must exist at this point")
+    }
+
+    fn extract_type_from_method(
+        &mut self,
+        expr_id: usize,
+        class_scope_id: scope::ScopeId,
+        method_name: &Rc<String>,
+        receiver_type_id: TypeId,
+        span: &scanner::Span,
+    ) -> TypeResult<TypeConstraint> {
+        use TypeDefinition::*;
+
+        let receiver_type = self
+            .hierarchy
+            .types
+            .get(&receiver_type_id)
+            .expect("Receiver type must exist");
+
+        match receiver_type {
+            Origin { node, .. } => {
+                // self.synthesize_method_call(node.get, binding_id, scope_id, class_scope_id, arg_types, span)
+                unimplemented!()
+            }
+            Variant { id, node, .. } => {
+                let id = *id;
+                let method_name: syntax::PatternName = method_name.into();
+                let expr_id = scope::ExprId(expr_id);
+
+                let scope_id = self
+                    .hierarchy
+                    .scope_hierarchy
+                    .expr_to_scope_id
+                    .get(&expr_id)
+                    .copied()
+                    .expect("Scope must exist");
+
+                for syntax::Pattern { name, value, .. } in node.iter() {
+                    if name == &method_name {
+                        return self.extract_type_declaration(class_scope_id, scope_id, value);
+                    }
+                }
+
+                Err(TypeError {
+                    kind: TypeErrorKind::UnboundSymbol,
+                    message: "Method not found in the variant",
+                    type_id: id,
+                    span: span.clone(),
+                })
+            }
+            TypeInstance { origin_id, .. } => self.extract_type_from_method(
+                expr_id,
+                class_scope_id,
+                method_name,
+                *origin_id,
+                span,
+            ),
+            _ => Err(TypeError {
+                kind: TypeErrorKind::InvalidMethodCall,
+                message: "Invalid method call type",
+                type_id: receiver_type.id(),
+                span: span.clone(),
+            }),
+        }
     }
 }
