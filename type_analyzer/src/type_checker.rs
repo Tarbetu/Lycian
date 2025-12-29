@@ -26,9 +26,6 @@ pub(crate) struct TypeChecker<'a> {
     // For optimization
     empty_type_constraint: TypeConstraint,
 
-    // Instead of stopping at the first concrete type error, just collect them
-    early_errors: Vec<TypeError>,
-
     // Collecting the overload types
     method_overload_types: HashMap<Rc<String>, HashSet<TypeId>>,
 }
@@ -42,7 +39,6 @@ impl<'a> TypeChecker<'a> {
             root_to_type: HashMap::new(),
             rank: HashMap::new(),
             empty_type_constraint: TypeConstraint::default(),
-            early_errors: Vec::new(),
             method_overload_types: HashMap::new(),
         }
     }
@@ -422,15 +418,23 @@ impl<'a> TypeChecker<'a> {
             Call {
                 caller,
                 callee: Some(receiver),
+                args,
                 ..
             } => {
                 let receiver_type_info = self.synthesize(class_scope_id, scope_id, receiver)?;
+
+                let arg_types: TypeResult<Vec<TypeConstraint>> = args
+                    .iter()
+                    .map(|arg| self.synthesize(class_scope_id, scope_id, arg))
+                    .collect();
+                let arg_types = arg_types?;
 
                 match receiver_type_info {
                     Exact(receiver_type_id) => self.extract_type_from_method(
                         expr.id,
                         class_scope_id,
                         caller,
+                        &arg_types,
                         receiver_type_id,
                         &expr.span,
                     ),
@@ -985,7 +989,8 @@ impl<'a> TypeChecker<'a> {
             }
             (Some(NeedsInfer(known_type_bounds)), NeedsInfer(declared_type_bounds)) => {
                 known_type_bounds.borrow_mut().merge(declared_type_bounds);
-                self.root_to_type.insert(expr_id, NeedsInfer(known_type_bounds.clone()));
+                self.root_to_type
+                    .insert(expr_id, NeedsInfer(known_type_bounds.clone()));
                 Ok(NeedsInfer(known_type_bounds))
             }
             (None, type_knowledge) => {
@@ -1027,6 +1032,7 @@ impl<'a> TypeChecker<'a> {
         expr_id: usize,
         class_scope_id: scope::ScopeId,
         method_name: &Rc<String>,
+        arg_types: &[TypeConstraint],
         receiver_type_id: TypeId,
         span: &scanner::Span,
     ) -> TypeResult<TypeConstraint> {
@@ -1039,9 +1045,48 @@ impl<'a> TypeChecker<'a> {
             .expect("Receiver type must exist");
 
         match receiver_type {
-            Origin { node, .. } => {
-                // self.synthesize_method_call(node.get, binding_id, scope_id, class_scope_id, arg_types, span)
-                unimplemented!()
+            Origin { id, node, .. } => {
+                if let Some(methods) = node.methods.get(method_name) {
+                    for method in methods {
+                        let param_types: TypeResult<Vec<TypeConstraint>> = method
+                            .params
+                            .iter()
+                            .map(|param| {
+                                self.extract_type_declaration(
+                                    class_scope_id,
+                                    class_scope_id,
+                                    &param.value,
+                                )
+                            })
+                            .collect();
+                        let param_types = param_types?;
+
+                        if param_types == arg_types {
+                            return self.extract_type_declaration(
+                                class_scope_id,
+                                class_scope_id,
+                                method
+                                    .return_type
+                                    .as_ref()
+                                    .expect("All methods required to have a return expression"),
+                            );
+                        }
+                    }
+
+                    Err(TypeError {
+                        kind: TypeErrorKind::OverloadFailure,
+                        message: "Does not match with any candidate",
+                        type_id: receiver_type_id,
+                        span: span.clone(),
+                    })
+                } else {
+                    Err(TypeError {
+                        kind: TypeErrorKind::UnboundSymbol,
+                        message: "Method not found in the class",
+                        type_id: *id,
+                        span: span.clone(),
+                    })
+                }
             }
             Variant { id, node, .. } => {
                 let id = *id;
@@ -1073,6 +1118,7 @@ impl<'a> TypeChecker<'a> {
                 expr_id,
                 class_scope_id,
                 method_name,
+                arg_types,
                 *origin_id,
                 span,
             ),
