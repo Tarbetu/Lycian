@@ -17,7 +17,7 @@ pub use scope::{ResolvedReferenceStatus, Scope};
 pub struct ExprId(pub usize);
 
 #[derive(Synonym)]
-pub struct ScopeId(usize);
+pub struct ScopeId(pub usize);
 
 #[derive(Synonym)]
 pub struct BindingId(usize);

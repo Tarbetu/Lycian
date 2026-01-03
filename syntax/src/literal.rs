@@ -5,7 +5,7 @@ use std::mem::discriminant;
 use std::ops::*;
 use std::rc::Rc;
 
-pub const PRECISION: u32 = 53;
+pub(crate) const PRECISION: u32 = 53;
 
 #[derive(Clone, Debug)]
 pub enum Literal {

@@ -46,6 +46,10 @@ impl EmbeddedTypes {
     pub fn is_number(&self, type_id: TypeId) -> bool {
         self.is_integer(type_id) || self.is_float(type_id)
     }
+
+    pub fn is_boolean(&self, type_id: TypeId) -> bool {
+        type_id == self.boolean || type_id == self.literal_true || type_id == self.literal_false
+    }
 }
 
 pub const EMBEDDED_TYPES: EmbeddedTypes = EmbeddedTypes {
