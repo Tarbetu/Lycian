@@ -1,21 +1,24 @@
 use crate::{Expression, ExpressionKind};
-pub use rug::Float as RugFloat;
+use rug::Float as RugFloat;
+use std::cell::RefCell;
 use std::collections::LinkedList;
-use std::mem::discriminant;
+use std::mem::{discriminant, swap};
 use std::ops::*;
 use std::rc::Rc;
 
 pub(crate) const PRECISION: u32 = 53;
 
+pub type BigFloat = Rc<RugFloat>;
+
 #[derive(Clone, Debug)]
 pub enum Literal {
-    Integer(RugFloat),
-    Float(RugFloat),
+    Integer(BigFloat),
+    Float(BigFloat),
     Boolean(bool),
     Char(u32),
     Str(Rc<String>),
-    LiteralList(LinkedList<Expression>),
-    LiteralArray(Vec<Expression>),
+    LiteralList(Rc<RefCell<LinkedList<Expression>>>),
+    LiteralArray(Rc<RefCell<Vec<Expression>>>),
 }
 
 impl Add for &Literal {
@@ -25,16 +28,18 @@ impl Add for &Literal {
         use Literal::{Float, Integer, LiteralArray, LiteralList, Str};
 
         match (self, rhs) {
-            (Integer(lhs), Integer(rhs)) => Some(Integer(alloc_num(lhs + rhs))),
-            (Float(lhs), Float(rhs)) => Some(Float(alloc_num(lhs + rhs))),
+            (Integer(lhs), Integer(rhs)) => Some(Integer(alloc_num(lhs.as_ref() + rhs.as_ref()))),
+            (Float(lhs), Float(rhs)) => Some(Float(alloc_num(lhs.as_ref() + rhs.as_ref()))),
             (Str(lhs), Str(rhs)) => Some(Str(Rc::new(format!("{}{}", lhs, rhs)))),
             (LiteralArray(lhs), LiteralArray(rhs)) => {
-                Some(LiteralArray([lhs.clone(), rhs.clone()].concat()))
+                let mut rhs_array = vec![];
+                swap(&mut rhs_array, &mut rhs.borrow_mut());
+                lhs.borrow_mut().extend(rhs_array);
+                Some(LiteralArray(lhs.clone()))
             }
             (LiteralList(lhs), LiteralList(rhs)) => {
-                let mut result = lhs.clone();
-                result.append(&mut rhs.clone());
-                Some(LiteralList(result))
+                lhs.borrow_mut().append(&mut rhs.borrow_mut());
+                Some(LiteralList(lhs.clone()))
             }
             _ => None,
         }
@@ -48,8 +53,8 @@ impl Sub for &Literal {
         use Literal::{Float, Integer};
 
         match (self, rhs) {
-            (Integer(lhs), Integer(rhs)) => Some(Integer(alloc_num(lhs - rhs))),
-            (Float(lhs), Float(rhs)) => Some(Float(alloc_num(lhs - rhs))),
+            (Integer(lhs), Integer(rhs)) => Some(Integer(alloc_num(lhs.as_ref() - rhs.as_ref()))),
+            (Float(lhs), Float(rhs)) => Some(Float(alloc_num(lhs.as_ref() - rhs.as_ref()))),
             _ => None,
         }
     }
@@ -62,8 +67,8 @@ impl Mul for &Literal {
         use Literal::{Float, Integer};
 
         match (self, rhs) {
-            (Integer(lhs), Integer(rhs)) => Some(Integer(alloc_num(lhs * rhs))),
-            (Float(lhs), Float(rhs)) => Some(Float(alloc_num(lhs * rhs))),
+            (Integer(lhs), Integer(rhs)) => Some(Integer(alloc_num(lhs.as_ref() * rhs.as_ref()))),
+            (Float(lhs), Float(rhs)) => Some(Float(alloc_num(lhs.as_ref() * rhs.as_ref()))),
             _ => None,
         }
     }
@@ -76,8 +81,8 @@ impl Div for &Literal {
         use Literal::{Float, Integer};
 
         match (self, rhs) {
-            (Integer(lhs), Integer(rhs)) => Some(Float(alloc_num(lhs / rhs))),
-            (Float(lhs), Float(rhs)) => Some(Float(alloc_num(lhs / rhs))),
+            (Integer(lhs), Integer(rhs)) => Some(Float(alloc_num(lhs.as_ref() / rhs.as_ref()))),
+            (Float(lhs), Float(rhs)) => Some(Float(alloc_num(lhs.as_ref() / rhs.as_ref()))),
             _ => None,
         }
     }
@@ -90,8 +95,8 @@ impl Rem for &Literal {
         use Literal::{Float, Integer};
 
         match (self, rhs) {
-            (Integer(lhs), Integer(rhs)) => Some(Integer(alloc_num(lhs % rhs))),
-            (Float(lhs), Float(rhs)) => Some(Float(alloc_num(lhs % rhs))),
+            (Integer(lhs), Integer(rhs)) => Some(Integer(alloc_num(lhs.as_ref() % rhs.as_ref()))),
+            (Float(lhs), Float(rhs)) => Some(Float(alloc_num(lhs.as_ref() % rhs.as_ref()))),
             _ => None,
         }
     }
@@ -137,10 +142,12 @@ impl PartialEq for Literal {
             (Boolean(lhs), Boolean(rhs)) => lhs == rhs,
             (Str(lhs), Str(rhs)) => lhs == rhs,
             (LiteralList(lhs), LiteralList(rhs)) => {
-                lhs.len() == rhs.len() && lhs.iter().eq(rhs.iter())
+                lhs.borrow().len() == rhs.borrow().len()
+                    && lhs.borrow().iter().eq(rhs.borrow().iter())
             }
             (LiteralArray(lhs), LiteralArray(rhs)) => {
-                lhs.len() == rhs.len() && lhs.iter().eq(rhs.iter())
+                lhs.borrow().len() == rhs.borrow().len()
+                    && lhs.borrow().iter().eq(rhs.borrow().iter())
             }
             _ => false,
         }
@@ -180,8 +187,8 @@ impl std::hash::Hash for Literal {
             Boolean(bool) => bool.hash(state),
             Char(char) => char.hash(state),
             Str(str) => str.hash(state),
-            LiteralList(expr_list) => expr_list.hash(state),
-            LiteralArray(expr_list) => expr_list.hash(state),
+            LiteralList(expr_list) => expr_list.borrow().hash(state),
+            LiteralArray(expr_list) => expr_list.borrow().hash(state),
         }
     }
 }
@@ -206,8 +213,8 @@ impl Neg for &Literal {
         use Literal::{Float, Integer};
 
         match self {
-            Integer(i) => Some(Integer(alloc_num(-i))),
-            Float(f) => Some(Float(alloc_num(-f))),
+            Integer(i) => Some(Integer(alloc_num(-i.as_ref()))),
+            Float(f) => Some(Float(alloc_num(-f.as_ref()))),
             _ => None,
         }
     }
@@ -236,14 +243,14 @@ impl Literal {
         use Literal::{Boolean, LiteralArray, LiteralList};
 
         match (self, rhs) {
-            (lhs, LiteralList(rhs)) => Some(Boolean(rhs.iter().any(|i| {
+            (lhs, LiteralList(rhs)) => Some(Boolean(rhs.borrow().iter().any(|i| {
                 if let ExpressionKind::Literal(i) = i.kind.as_ref() {
                     i.as_ref() == lhs
                 } else {
                     false
                 }
             }))),
-            (lhs, LiteralArray(rhs)) => Some(Boolean(rhs.iter().any(|i| {
+            (lhs, LiteralArray(rhs)) => Some(Boolean(rhs.borrow().iter().any(|i| {
                 if let ExpressionKind::Literal(i) = i.kind.as_ref() {
                     i.as_ref() == lhs
                 } else {
@@ -298,19 +305,19 @@ impl Literal {
             (LiteralList(list), Integer(num)) => num
                 .to_integer()
                 .and_then(|int| int.to_usize())
-                .and_then(|index| list.iter().nth(index).cloned()),
+                .and_then(|index| list.borrow().iter().nth(index).cloned()),
             (LiteralArray(list), Integer(num)) => num
                 .to_integer()
                 .and_then(|int| int.to_usize())
-                .and_then(|index| list.get(index).cloned()),
+                .and_then(|index| list.borrow().get(index).cloned()),
             _ => unreachable!(),
         }
     }
 }
 
-fn alloc_num<T>(value: T) -> RugFloat
+fn alloc_num<T>(value: T) -> BigFloat
 where
     RugFloat: rug::Assign<T>,
 {
-    RugFloat::with_val(PRECISION, value)
+    Rc::new(RugFloat::with_val(PRECISION, value))
 }

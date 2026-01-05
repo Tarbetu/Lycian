@@ -45,6 +45,9 @@ pub struct TypeBounds {
     // -- It will passed as a argument to the type instance
     pub type_arguments: Vec<TypeConstraint>,
 
+    // -- Literal Value Constraint
+    pub literal_value: Option<syntax::Literal>,
+
     // -- Trait Constraints
     pub must_be_numeric: bool,
     pub must_be_addable: bool,
@@ -148,5 +151,34 @@ impl TypeBounds {
         if self.super_call.is_none() {
             self.super_call = take(&mut other.super_call);
         }
+    }
+
+    pub fn can_be_casted_to_boolean(&self) -> bool {
+        self.upper_bounds.is_empty()
+            && self.lower_bounds.is_empty()
+            && !self.must_be_list
+            && !self.must_be_array
+            && !self.must_be_numeric
+            && !self.must_be_addable
+            && !self.must_be_integer
+            && !self.must_be_floating
+            && !self.must_be_callable
+    }
+
+    pub fn can_be_casted_to_integer(&self) -> bool {
+        self.upper_bounds.is_empty()
+            && self.lower_bounds.is_empty()
+            && !self.must_be_list
+            && !self.must_be_array
+            && !self.must_be_callable
+            && !self.must_be_floating
+    }
+
+    pub fn can_be_casted_to_float(&self) -> bool {
+        self.upper_bounds.is_empty()
+            && self.lower_bounds.is_empty()
+            && !self.must_be_list
+            && !self.must_be_array
+            && !self.must_be_callable
     }
 }

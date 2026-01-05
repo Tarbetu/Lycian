@@ -13,8 +13,8 @@ mod parser_tests {
         parser.parse().unwrap()
     }
 
-    fn number(number: f64) -> rug::Float {
-        rug::Float::with_val(literal::PRECISION, number)
+    fn number(number: f64) -> Rc<rug::Float> {
+        Rc::new(rug::Float::with_val(literal::PRECISION, number))
     }
 
     #[test]

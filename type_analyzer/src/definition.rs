@@ -84,7 +84,7 @@ pub enum TypeDefinition<'a> {
     Literal {
         id: TypeId,
         origin_id: TypeId,
-        node: &'a syntax::Literal,
+        node: syntax::Literal,
     },
     EmbeddedType {
         id: TypeId,

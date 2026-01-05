@@ -25,6 +25,7 @@ use std::collections::LinkedList;
 
 use ahash::AHashMap;
 use scopeguard::guard;
+use std::cell::RefCell;
 use std::mem::swap;
 use std::rc::Rc;
 
@@ -739,9 +740,9 @@ impl Parser {
             let number = rug::Float::with_val(literal::PRECISION, incomplete);
 
             let literal = if token.kind == Float {
-                Literal::Float(number)
+                Literal::Float(Rc::new(number))
             } else {
-                Literal::Integer(number)
+                Literal::Integer(Rc::new(number))
             };
             Ok(Expression {
                 kind: Box::new(ExpressionKind::Literal(Rc::new(literal))),
@@ -761,7 +762,7 @@ impl Parser {
             if self.is_match(&[BracketClose]) {
                 Ok(Expression {
                     kind: Box::new(ExpressionKind::Literal(Rc::new(Literal::LiteralList(
-                        LinkedList::new(),
+                        Rc::new(RefCell::new(LinkedList::new())),
                     )))),
                     id: self.next_id(),
                     span: self.previous().span,
@@ -777,7 +778,9 @@ impl Parser {
                 self.consume(BracketClose, "End of List")?;
 
                 Ok(Expression {
-                    kind: Box::new(ExpressionKind::Literal(Rc::new(Literal::LiteralList(list)))),
+                    kind: Box::new(ExpressionKind::Literal(Rc::new(Literal::LiteralList(
+                        Rc::new(RefCell::new(list)),
+                    )))),
                     id: self.next_id(),
                     span: self.previous().span,
                 })
@@ -786,7 +789,7 @@ impl Parser {
             if self.is_match(&[BraceClose]) {
                 Ok(Expression {
                     kind: Box::new(ExpressionKind::Literal(Rc::new(Literal::LiteralArray(
-                        vec![],
+                        Rc::new(RefCell::new(vec![])),
                     )))),
                     id: self.next_id(),
                     span: self.previous().span,
@@ -802,7 +805,7 @@ impl Parser {
 
                 Ok(Expression {
                     kind: Box::new(ExpressionKind::Literal(Rc::new(Literal::LiteralArray(
-                        list,
+                        Rc::new(RefCell::new(list)),
                     )))),
                     id: self.next_id(),
                     span: self.previous().span,

@@ -149,7 +149,7 @@ impl<'a> TypeChecker<'a> {
         Ok(())
     }
 
-    fn synthesize(&mut self, expr: &'a syntax::Expression) -> TypeResult<TypeConstraint> {
+    fn synthesize(&mut self, expr: &syntax::Expression) -> TypeResult<TypeConstraint> {
         use TypeConstraint::*;
         use syntax::ExpressionKind::*;
 
@@ -417,7 +417,7 @@ impl<'a> TypeChecker<'a> {
 
     fn check(
         &mut self,
-        expr: &'a syntax::Expression,
+        expr: &syntax::Expression,
         declared_type: TypeConstraint,
     ) -> TypeResult<TypeConstraint> {
         use TypeConstraint::*;
@@ -453,7 +453,7 @@ impl<'a> TypeChecker<'a> {
                                 })
                             }
                             TypeInstance { args, .. } => {
-                                if elements.is_empty() {
+                                if elements.borrow().is_empty() {
                                     self.declare_type(expr, Exact(declared_type_id))
                                 } else {
                                     let element_type = args.first().copied().expect(
@@ -461,11 +461,11 @@ impl<'a> TypeChecker<'a> {
                                     );
 
                                     let first_element_expr = elements
-                                        .first()
-                                        .expect("Existence must be checked before this point!");
+                                        .borrow();
+                                    let first_element_expr = first_element_expr.first().expect("Existence must be checked before this point!");
                                     self.declare_type(first_element_expr, Exact(element_type))?;
 
-                                    for element_expr in elements.iter().skip(1) {
+                                    for element_expr in elements.borrow().iter().skip(1) {
                                         self.declare_type(element_expr, Exact(element_type))?;
                                         self.declare_similarity(first_element_expr, element_expr)?
                                     }
@@ -513,20 +513,21 @@ impl<'a> TypeChecker<'a> {
                                 })
                             }
                             TypeInstance { args, .. } => {
-                                if elements.is_empty() {
+                                if elements.borrow().is_empty() {
                                     self.declare_type(expr, Exact(declared_type_id))
                                 } else {
                                     let element_type = args.first().copied().expect(
                                         "Empty type instance arg must be checked before this point!",
                                     );
 
-                                    let first_element_expr = elements
+                                    let first_element_expr = elements.borrow();
+                                    let first_element_expr = first_element_expr
                                         .iter()
                                         .nth(0)
                                         .expect("Existence must be checked before this point!");
                                     self.declare_type(first_element_expr, Exact(element_type))?;
 
-                                    for element_expr in elements.iter().skip(1) {
+                                    for element_expr in elements.borrow().iter().skip(1) {
                                         self.declare_type(element_expr, Exact(element_type))?;
                                         self.declare_similarity(first_element_expr, element_expr)?
                                     }
@@ -566,9 +567,9 @@ impl<'a> TypeChecker<'a> {
                                 span: expr.span.clone(),
                             })
                         } else if (declared_type_id == EMBEDDED_TYPES.float32
-                            && (f32::MIN..=f32::MAX).contains(number))
+                            && (f32::MIN..=f32::MAX).contains(number.as_ref()))
                             || (declared_type_id == EMBEDDED_TYPES.float64
-                                && (f64::MIN..=f64::MAX).contains(number))
+                                && (f64::MIN..=f64::MAX).contains(number.as_ref()))
                         {
                             self.declare_type(expr, Exact(declared_type_id))
                         } else {
@@ -657,73 +658,116 @@ impl<'a> TypeChecker<'a> {
                     }
                 }
             }
-            (Binary(lhs, op, rhs), Exact(declared_type_id))
-                if op.is_logical() && (EMBEDDED_TYPES.literal_true == declared_type_id || EMBEDDED_TYPES.literal_false == declared_type_id) => {
-                    let Exact(lhs_type) = self.synthesize(expr)? else {
-                        return Err(TypeError { kind: TypeErrorKind::TypeMismatch,
-                            message: "Expected literal boolean which built by literal booleans",
-                            type_id: declared_type_id,
-                            span: expr.span.clone() })
-                    };
-
-                    let Exact(rhs_type) = self.synthesize(expr)? else {
-                        return Err(TypeError { kind: TypeErrorKind::TypeMismatch,
-                            message: "Expected literal true which built by literal booleans",
-                            type_id: declared_type_id,
-                            span: expr.span.clone() })
-                    };
-
-                    use syntax::Operator::*;
-                    match op {
-                        And | Or if declared_type_id == EMBEDDED_TYPES.literal_true && EMBEDDED_TYPES.literal_true == rhs_type && EMBEDDED_TYPES.literal_true == lhs_type => {
-                            self.declare_type(expr, Exact(declared_type_id))
-                        }
-                        And if declared_type_id == EMBEDDED_TYPES.literal_true => {
-                            Err(TypeError { kind: TypeErrorKind::TypeMismatch,
-                                message: "Expected literal true built by a \"AND\" operator",
-                                type_id: declared_type_id,
-                                span: expr.span.clone() })
-                        }
-                        Or if declared_type_id == EMBEDDED_TYPES.literal_true && (EMBEDDED_TYPES.literal_true == rhs_type || EMBEDDED_TYPES.literal_true == rhs_type) => {
-                            self.declare_type(expr, Exact(declared_type_id))
-                        }
-                        Or if declared_type_id == EMBEDDED_TYPES.literal_true => {
-                            Err(TypeError { kind: TypeErrorKind::TypeMismatch,
-                                message: "Expected literal true built by a \"OR\" operator",
-                                type_id: declared_type_id,
-                                span: expr.span.clone() })
-                        }
-                        And | Or if declared_type_id == EMBEDDED_TYPES.literal_false && EMBEDDED_TYPES.literal_false == rhs_type && EMBEDDED_TYPES.literal_false == lhs_type => {
-                            self.declare_type(expr, Exact(declared_type_id))
-                        }
-                        Or if declared_type_id == EMBEDDED_TYPES.literal_false => {
-                            Err(TypeError { kind: TypeErrorKind::TypeMismatch,
-                                message: "Expected literal false built by a \"OR\" operator",
-                                type_id: declared_type_id,
-                                span: expr.span.clone() })
-                        }
-                        And if declared_type_id == EMBEDDED_TYPES.literal_false && (EMBEDDED_TYPES.literal_false == rhs_type || EMBEDDED_TYPES.literal_false == rhs_type) => {
-                            self.declare_type(expr, Exact(declared_type_id))
-                        }
-                        And if declared_type_id == EMBEDDED_TYPES.literal_false => {
-                            Err(TypeError { kind: TypeErrorKind::TypeMismatch,
-                                message: "Expected literal false built by a \"AND\" operator",
-                                type_id: declared_type_id,
-                                span: expr.span.clone() })
-                        }
-                        _ => unreachable!()
-                    }
-                }
-            (Binary(lhs, op, rhs), Exact(declared_type_id))
-                if op.is_logical() && EMBEDDED_TYPES.boolean == declared_type_id =>
-            {
-                self.check(lhs, Exact(declared_type_id));
-                self.check(rhs, Exact(declared_type_id));
-                self.declare_type(expr, Exact(declared_type_id))
-            }
             // NOTE: Literal types can only composed with other literal types
             // This is constexpr evaluation based on types
             // For runtime values, literal types can not be used
+            (Binary(lhs, op, rhs), Exact(declared_type_id))
+                if op.is_logical()
+                    && (EMBEDDED_TYPES.literal_true == declared_type_id
+                        || EMBEDDED_TYPES.literal_false == declared_type_id) =>
+            {
+                let Exact(lhs_type) = self.synthesize(expr)? else {
+                    return Err(TypeError {
+                        kind: TypeErrorKind::TypeMismatch,
+                        message: "Expected literal boolean which built by literal booleans",
+                        type_id: declared_type_id,
+                        span: expr.span.clone(),
+                    });
+                };
+
+                let Exact(rhs_type) = self.synthesize(expr)? else {
+                    return Err(TypeError {
+                        kind: TypeErrorKind::TypeMismatch,
+                        message: "Expected literal true which built by literal booleans",
+                        type_id: declared_type_id,
+                        span: expr.span.clone(),
+                    });
+                };
+
+                use syntax::Operator::*;
+                match op {
+                    And | Or
+                        if declared_type_id == EMBEDDED_TYPES.literal_true
+                            && EMBEDDED_TYPES.literal_true == rhs_type
+                            && EMBEDDED_TYPES.literal_true == lhs_type =>
+                    {
+                        self.declare_type(expr, Exact(declared_type_id))
+                    }
+                    And if declared_type_id == EMBEDDED_TYPES.literal_true => Err(TypeError {
+                        kind: TypeErrorKind::TypeMismatch,
+                        message: "Expected literal true built by a \"AND\" operator",
+                        type_id: declared_type_id,
+                        span: expr.span.clone(),
+                    }),
+                    Or if declared_type_id == EMBEDDED_TYPES.literal_true
+                        && (EMBEDDED_TYPES.literal_true == lhs_type
+                            || EMBEDDED_TYPES.literal_true == rhs_type) =>
+                    {
+                        self.declare_type(expr, Exact(declared_type_id))
+                    }
+                    Or if declared_type_id == EMBEDDED_TYPES.literal_true => Err(TypeError {
+                        kind: TypeErrorKind::TypeMismatch,
+                        message: "Expected literal true built by a \"OR\" operator",
+                        type_id: declared_type_id,
+                        span: expr.span.clone(),
+                    }),
+                    And | Or
+                        if declared_type_id == EMBEDDED_TYPES.literal_false
+                            && EMBEDDED_TYPES.literal_false == rhs_type
+                            && EMBEDDED_TYPES.literal_false == lhs_type =>
+                    {
+                        self.declare_type(expr, Exact(declared_type_id))
+                    }
+                    Or if declared_type_id == EMBEDDED_TYPES.literal_false => Err(TypeError {
+                        kind: TypeErrorKind::TypeMismatch,
+                        message: "Expected literal false built by a \"OR\" operator",
+                        type_id: declared_type_id,
+                        span: expr.span.clone(),
+                    }),
+                    And if declared_type_id == EMBEDDED_TYPES.literal_false
+                        && (EMBEDDED_TYPES.literal_false == lhs_type
+                            || EMBEDDED_TYPES.literal_false == rhs_type) =>
+                    {
+                        self.declare_type(expr, Exact(declared_type_id))
+                    }
+                    And if declared_type_id == EMBEDDED_TYPES.literal_false => Err(TypeError {
+                        kind: TypeErrorKind::TypeMismatch,
+                        message: "Expected literal false built by a \"AND\" operator",
+                        type_id: declared_type_id,
+                        span: expr.span.clone(),
+                    }),
+                    _ => unreachable!(),
+                }
+            }
+            (Binary(lhs, op, rhs), Exact(declared_type_id))
+                if op.is_logical() && EMBEDDED_TYPES.boolean == declared_type_id =>
+            {
+                self.check(lhs, Exact(EMBEDDED_TYPES.boolean));
+                self.check(rhs, Exact(EMBEDDED_TYPES.boolean));
+                self.declare_type(expr, Exact(EMBEDDED_TYPES.boolean))
+            }
+            (Binary(_, op, _), Exact(declared_type_id)) if op.is_logical() => {
+                Err(TypeError {
+                    kind: TypeErrorKind::TypeMismatch,
+                    message: "Expected boolean inside a Binary expression",
+                    type_id: declared_type_id,
+                    span: expr.span.clone(),
+                })
+            }
+            (Binary(lhs, op, rhs), NeedsInfer(expected_bounds))
+                if op.is_logical() && expected_bounds.borrow().can_be_casted_to_boolean() => {
+                self.check(lhs, Exact(EMBEDDED_TYPES.boolean));
+                self.check(rhs, Exact(EMBEDDED_TYPES.boolean));
+                self.declare_type(expr, Exact(EMBEDDED_TYPES.boolean))
+            }
+            (Binary(_, op, _), NeedsInfer(expected_bounds)) if op.is_logical() => {
+                Err(TypeError {
+                    kind: TypeErrorKind::TypeMismatch,
+                    message: "Expected boolean inside a Binary expression",
+                    type_id: TypeId(0),
+                    span: expr.span.clone(),
+                })
+            }
             (Unary(syntax::Operator::Not, inner_expr), Exact(declared_type_id))
                 if declared_type_id == EMBEDDED_TYPES.literal_true =>
             {
@@ -739,23 +783,48 @@ impl<'a> TypeChecker<'a> {
             (Unary(syntax::Operator::Not, inner_expr), Exact(declared_type_id))
                 if declared_type_id == EMBEDDED_TYPES.boolean =>
             {
-                self.check(inner_expr, Exact(declared_type_id))?;
-                self.declare_type(inner_expr, Exact(declared_type_id))
+                self.check(inner_expr, Exact(EMBEDDED_TYPES.boolean))?;
+                self.declare_type(inner_expr, Exact(EMBEDDED_TYPES.boolean))
             }
-            (Unary(syntax::Operator::Not, inner_expr), Exact(declared_type_id)) => Err(TypeError {
+            (Unary(syntax::Operator::Not, inner_expr), NeedsInfer(expected_bounds))
+                if expected_bounds.borrow().can_be_casted_to_boolean() =>
+            {
+                self.check(inner_expr, Exact(EMBEDDED_TYPES.boolean))?;
+                self.declare_type(inner_expr, Exact(EMBEDDED_TYPES.boolean))
+            }
+            (Unary(syntax::Operator::Not, _), Exact(declared_type_id)) => Err(TypeError {
                 kind: TypeErrorKind::TypeMismatch,
                 message: "Expected boolean inside a Binary expression",
                 type_id: declared_type_id,
                 span: expr.span.clone(),
             }),
+            (Unary(syntax::Operator::Not, _), NeedsInfer(_)) => Err(TypeError {
+                kind: TypeErrorKind::TypeMismatch,
+                message: "Expected boolean inside a Binary expression",
+                type_id: TypeId(0),
+                span: expr.span.clone(),
+            }),
+            (Unary(syntax::Operator::Negate, _), Exact(declared_type_id)) if EMBEDDED_TYPES.is_unsigned_number(declared_type_id) => {
+                Err(TypeError {
+                    kind: TypeErrorKind::TypeMismatch,
+                    message: "Cannot negate an unsigned number",
+                    type_id: declared_type_id,
+                    span: expr.span.clone(),
+                })
+            }
+            (Unary(syntax::Operator::Negate, inner_expr), Exact(declared_type_id)) if EMBEDDED_TYPES.is_number(declared_type_id) => {
+                self.check(inner_expr, Exact(declared_type_id));
+                self.declare_type(expr, Exact(declared_type_id))
+            }
+            _ => unimplemented!()
         }
     }
 
     fn check_integer(
         &mut self,
-        expr: &'a syntax::Expression,
+        expr: &syntax::Expression,
         declared_type_id: TypeId,
-        number: &syntax::RugFloat,
+        number: &syntax::BigFloat,
     ) -> Result<TypeConstraint, TypeError> {
         let integer = number.to_integer().expect("to be finite!");
 
@@ -912,12 +981,12 @@ impl<'a> TypeChecker<'a> {
     fn synthesize_literal_type(
         &mut self,
         expr: &syntax::Expression,
-        literal: &'a syntax::Literal,
+        literal: &syntax::Literal,
     ) -> TypeResult<TypeConstraint> {
         use TypeConstraint::*;
         use syntax::Literal::*;
 
-        match literal {
+        match literal.clone() {
             Integer(_) => Ok(self.declare_type(
                 expr,
                 TypeConstraint::needs_infer(TypeBounds::default().integer()),
@@ -937,7 +1006,7 @@ impl<'a> TypeChecker<'a> {
                         let type_def = TypeDefinition::Literal {
                             id: type_id,
                             origin_id: EMBEDDED_TYPES.char,
-                            node: literal,
+                            node: literal.clone(),
                         };
                         self.hierarchy.types.insert(type_id, type_def);
                         Exact(type_id)
@@ -955,7 +1024,7 @@ impl<'a> TypeChecker<'a> {
                             let type_def = TypeDefinition::Literal {
                                 id: type_id,
                                 origin_id: EMBEDDED_TYPES.string,
-                                node: literal,
+                                node: literal.clone(),
                             };
                             self.hierarchy.types.insert(type_id, type_def);
                             Exact(type_id)
@@ -965,11 +1034,11 @@ impl<'a> TypeChecker<'a> {
                 Ok(self.declare_type(expr, type_constraint)?)
             }
             LiteralList(expr_list) => {
-                let type_constraint = if let Some(first_expr) = expr_list.front() {
+                let type_constraint = if let Some(first_expr) = expr_list.borrow().front() {
                     let type_constraints = {
                         let mut type_constraints = self.synthesize(first_expr)?;
 
-                        for expr in expr_list.iter().skip(1) {
+                        for expr in expr_list.borrow().iter().skip(1) {
                             type_constraints = self.check(expr, type_constraints)?;
                             self.declare_similarity(first_expr, expr)?;
                         }
@@ -987,11 +1056,11 @@ impl<'a> TypeChecker<'a> {
                 Ok(self.declare_type(expr, type_constraint)?)
             }
             LiteralArray(expr_array) => {
-                let type_contraint = if let Some(first_expr) = expr_array.first() {
+                let type_contraint = if let Some(first_expr) = expr_array.borrow().first() {
                     let type_constraints = {
                         let mut type_constraints = self.synthesize(first_expr)?;
 
-                        for expr in expr_array.iter().skip(1) {
+                        for expr in expr_array.borrow().iter().skip(1) {
                             type_constraints = self.check(expr, type_constraints)?;
                             self.declare_similarity(first_expr, expr)?;
                         }
