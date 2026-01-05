@@ -429,6 +429,7 @@ impl<'a> TypeChecker<'a> {
             }
             (Grouping(inner_expr), declared_type) => self.check(inner_expr, declared_type),
             (Literal(literal), Exact(declared_type_id)) => {
+
                 use syntax::Literal::*;
 
                 match literal.as_ref() {
@@ -615,7 +616,10 @@ impl<'a> TypeChecker<'a> {
                             .expect("The type must exist in this point!");
 
                         match type_def {
-                            TypeDefinition::Literal { node: syntax::Literal::Char(char_from_node), .. } if char_from_node == value => {
+                            TypeDefinition::Literal {
+                                node: syntax::Literal::Char(char_from_node),
+                                ..
+                            } if char_from_node == value => {
                                 self.declare_type(expr, Exact(declared_type_id))
                             }
                             _ => Err(TypeError {
@@ -637,7 +641,10 @@ impl<'a> TypeChecker<'a> {
                             .expect("The type must exist in this point!");
 
                         match type_def {
-                            TypeDefinition::Literal { node: syntax::Literal::Str(string_from_node), .. } if string_from_node == value => {
+                            TypeDefinition::Literal {
+                                node: syntax::Literal::Str(string_from_node),
+                                ..
+                            } if string_from_node == value => {
                                 self.declare_type(expr, Exact(declared_type_id))
                             }
                             _ => Err(TypeError {
@@ -650,7 +657,97 @@ impl<'a> TypeChecker<'a> {
                     }
                 }
             }
-            _ => unimplemented!(),
+            (Binary(lhs, op, rhs), Exact(declared_type_id))
+                if op.is_logical() && (EMBEDDED_TYPES.literal_true == declared_type_id || EMBEDDED_TYPES.literal_false == declared_type_id) => {
+                    let Exact(lhs_type) = self.synthesize(expr)? else {
+                        return Err(TypeError { kind: TypeErrorKind::TypeMismatch,
+                            message: "Expected literal boolean which built by literal booleans",
+                            type_id: declared_type_id,
+                            span: expr.span.clone() })
+                    };
+
+                    let Exact(rhs_type) = self.synthesize(expr)? else {
+                        return Err(TypeError { kind: TypeErrorKind::TypeMismatch,
+                            message: "Expected literal true which built by literal booleans",
+                            type_id: declared_type_id,
+                            span: expr.span.clone() })
+                    };
+
+                    use syntax::Operator::*;
+                    match op {
+                        And | Or if declared_type_id == EMBEDDED_TYPES.literal_true && EMBEDDED_TYPES.literal_true == rhs_type && EMBEDDED_TYPES.literal_true == lhs_type => {
+                            self.declare_type(expr, Exact(declared_type_id))
+                        }
+                        And if declared_type_id == EMBEDDED_TYPES.literal_true => {
+                            Err(TypeError { kind: TypeErrorKind::TypeMismatch,
+                                message: "Expected literal true built by a \"AND\" operator",
+                                type_id: declared_type_id,
+                                span: expr.span.clone() })
+                        }
+                        Or if declared_type_id == EMBEDDED_TYPES.literal_true && (EMBEDDED_TYPES.literal_true == rhs_type || EMBEDDED_TYPES.literal_true == rhs_type) => {
+                            self.declare_type(expr, Exact(declared_type_id))
+                        }
+                        Or if declared_type_id == EMBEDDED_TYPES.literal_true => {
+                            Err(TypeError { kind: TypeErrorKind::TypeMismatch,
+                                message: "Expected literal true built by a \"OR\" operator",
+                                type_id: declared_type_id,
+                                span: expr.span.clone() })
+                        }
+                        And | Or if declared_type_id == EMBEDDED_TYPES.literal_false && EMBEDDED_TYPES.literal_false == rhs_type && EMBEDDED_TYPES.literal_false == lhs_type => {
+                            self.declare_type(expr, Exact(declared_type_id))
+                        }
+                        Or if declared_type_id == EMBEDDED_TYPES.literal_false => {
+                            Err(TypeError { kind: TypeErrorKind::TypeMismatch,
+                                message: "Expected literal false built by a \"OR\" operator",
+                                type_id: declared_type_id,
+                                span: expr.span.clone() })
+                        }
+                        And if declared_type_id == EMBEDDED_TYPES.literal_false && (EMBEDDED_TYPES.literal_false == rhs_type || EMBEDDED_TYPES.literal_false == rhs_type) => {
+                            self.declare_type(expr, Exact(declared_type_id))
+                        }
+                        And if declared_type_id == EMBEDDED_TYPES.literal_false => {
+                            Err(TypeError { kind: TypeErrorKind::TypeMismatch,
+                                message: "Expected literal false built by a \"AND\" operator",
+                                type_id: declared_type_id,
+                                span: expr.span.clone() })
+                        }
+                        _ => unreachable!()
+                    }
+                }
+            (Binary(lhs, op, rhs), Exact(declared_type_id))
+                if op.is_logical() && EMBEDDED_TYPES.boolean == declared_type_id =>
+            {
+                self.check(lhs, Exact(declared_type_id));
+                self.check(rhs, Exact(declared_type_id));
+                self.declare_type(expr, Exact(declared_type_id))
+            }
+            // NOTE: Literal types can only composed with other literal types
+            // This is constexpr evaluation based on types
+            // For runtime values, literal types can not be used
+            (Unary(syntax::Operator::Not, inner_expr), Exact(declared_type_id))
+                if declared_type_id == EMBEDDED_TYPES.literal_true =>
+            {
+                self.check(inner_expr, Exact(EMBEDDED_TYPES.literal_false))?;
+                self.declare_type(inner_expr, Exact(EMBEDDED_TYPES.literal_true))
+            }
+            (Unary(syntax::Operator::Not, inner_expr), Exact(declared_type_id))
+                if declared_type_id == EMBEDDED_TYPES.literal_false =>
+            {
+                self.check(inner_expr, Exact(EMBEDDED_TYPES.literal_true))?;
+                self.declare_type(inner_expr, Exact(EMBEDDED_TYPES.literal_false))
+            }
+            (Unary(syntax::Operator::Not, inner_expr), Exact(declared_type_id))
+                if declared_type_id == EMBEDDED_TYPES.boolean =>
+            {
+                self.check(inner_expr, Exact(declared_type_id))?;
+                self.declare_type(inner_expr, Exact(declared_type_id))
+            }
+            (Unary(syntax::Operator::Not, inner_expr), Exact(declared_type_id)) => Err(TypeError {
+                kind: TypeErrorKind::TypeMismatch,
+                message: "Expected boolean inside a Binary expression",
+                type_id: declared_type_id,
+                span: expr.span.clone(),
+            }),
         }
     }
 
@@ -1332,7 +1429,8 @@ impl<'a> TypeChecker<'a> {
                 let method_name: syntax::PatternName = method_name.into();
                 let expr_id = scope::ExprId(expr_id);
 
-                let scope_id = self
+                let scope_id = self.scope_id;
+                self.scope_id = self
                     .hierarchy
                     .scope_hierarchy
                     .expr_to_scope_id
@@ -1342,7 +1440,10 @@ impl<'a> TypeChecker<'a> {
 
                 for syntax::Pattern { name, value, .. } in node.iter() {
                     if name == &method_name {
-                        return self.extract_type_declaration(value);
+                        let result = self.extract_type_declaration(value);
+
+                        self.scope_id = scope_id;
+                        return result;
                     }
                 }
 
