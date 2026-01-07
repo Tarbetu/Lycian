@@ -113,13 +113,17 @@ impl<'a> Hierarchy<'a> {
         scope_id: scope::ScopeId,
         method_name: &Rc<String>,
     ) -> Option<scope::BindingId> {
-        let scope = self.scope_hierarchy.scopes.get(&scope_id).expect("Scope does not exist");
+        let scope = self
+            .scope_hierarchy
+            .scopes
+            .get(&scope_id)
+            .expect("Scope does not exist");
 
         use scope::SyntaxNode::*;
         match &scope.node {
             Root => None,
             Class(_) => scope.bindings.get(&method_name.into()).cloned(),
-            _ => self.find_method(scope_id, method_name)
+            _ => self.find_method(scope_id, method_name),
         }
     }
 

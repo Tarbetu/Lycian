@@ -429,7 +429,6 @@ impl<'a> TypeChecker<'a> {
             }
             (Grouping(inner_expr), declared_type) => self.check(inner_expr, declared_type),
             (Literal(literal), Exact(declared_type_id)) => {
-
                 use syntax::Literal::*;
 
                 match literal.as_ref() {
@@ -460,9 +459,10 @@ impl<'a> TypeChecker<'a> {
                                         "Empty type instance arg must be checked before this point!",
                                     );
 
-                                    let first_element_expr = elements
-                                        .borrow();
-                                    let first_element_expr = first_element_expr.first().expect("Existence must be checked before this point!");
+                                    let first_element_expr = elements.borrow();
+                                    let first_element_expr = first_element_expr
+                                        .first()
+                                        .expect("Existence must be checked before this point!");
                                     self.declare_type(first_element_expr, Exact(element_type))?;
 
                                     for element_expr in elements.borrow().iter().skip(1) {
@@ -474,6 +474,7 @@ impl<'a> TypeChecker<'a> {
                                 }
                             }
                             Literal { node, .. } => {
+                                // Hey!
                                 let syntax::Literal::LiteralArray(_) = node else {
                                     return Err(TypeError {
                                         kind: TypeErrorKind::TypeMismatch,
@@ -666,7 +667,7 @@ impl<'a> TypeChecker<'a> {
                     && (EMBEDDED_TYPES.literal_true == declared_type_id
                         || EMBEDDED_TYPES.literal_false == declared_type_id) =>
             {
-                let Exact(lhs_type) = self.synthesize(expr)? else {
+                let Exact(lhs_type) = self.synthesize(lhs)? else {
                     return Err(TypeError {
                         kind: TypeErrorKind::TypeMismatch,
                         message: "Expected literal boolean which built by literal booleans",
@@ -675,7 +676,7 @@ impl<'a> TypeChecker<'a> {
                     });
                 };
 
-                let Exact(rhs_type) = self.synthesize(expr)? else {
+                let Exact(rhs_type) = self.synthesize(rhs)? else {
                     return Err(TypeError {
                         kind: TypeErrorKind::TypeMismatch,
                         message: "Expected literal true which built by literal booleans",
@@ -742,32 +743,29 @@ impl<'a> TypeChecker<'a> {
             (Binary(lhs, op, rhs), Exact(declared_type_id))
                 if op.is_logical() && EMBEDDED_TYPES.boolean == declared_type_id =>
             {
-                self.check(lhs, Exact(EMBEDDED_TYPES.boolean));
-                self.check(rhs, Exact(EMBEDDED_TYPES.boolean));
+                self.check(lhs, Exact(EMBEDDED_TYPES.boolean))?;
+                self.check(rhs, Exact(EMBEDDED_TYPES.boolean))?;
                 self.declare_type(expr, Exact(EMBEDDED_TYPES.boolean))
             }
-            (Binary(_, op, _), Exact(declared_type_id)) if op.is_logical() => {
-                Err(TypeError {
-                    kind: TypeErrorKind::TypeMismatch,
-                    message: "Expected boolean inside a Binary expression",
-                    type_id: declared_type_id,
-                    span: expr.span.clone(),
-                })
-            }
+            (Binary(_, op, _), Exact(declared_type_id)) if op.is_logical() => Err(TypeError {
+                kind: TypeErrorKind::TypeMismatch,
+                message: "Expected boolean inside a Binary expression",
+                type_id: declared_type_id,
+                span: expr.span.clone(),
+            }),
             (Binary(lhs, op, rhs), NeedsInfer(expected_bounds))
-                if op.is_logical() && expected_bounds.borrow().can_be_casted_to_boolean() => {
-                self.check(lhs, Exact(EMBEDDED_TYPES.boolean));
-                self.check(rhs, Exact(EMBEDDED_TYPES.boolean));
+                if op.is_logical() && expected_bounds.borrow().can_be_casted_to_boolean() =>
+            {
+                self.check(lhs, Exact(EMBEDDED_TYPES.boolean))?;
+                self.check(rhs, Exact(EMBEDDED_TYPES.boolean))?;
                 self.declare_type(expr, Exact(EMBEDDED_TYPES.boolean))
             }
-            (Binary(_, op, _), NeedsInfer(expected_bounds)) if op.is_logical() => {
-                Err(TypeError {
-                    kind: TypeErrorKind::TypeMismatch,
-                    message: "Expected boolean inside a Binary expression",
-                    type_id: TypeId(0),
-                    span: expr.span.clone(),
-                })
-            }
+            (Binary(_, op, _), NeedsInfer(_expected_bounds)) if op.is_logical() => Err(TypeError {
+                kind: TypeErrorKind::TypeMismatch,
+                message: "Expected boolean inside a Binary expression",
+                type_id: TypeId(0),
+                span: expr.span.clone(),
+            }),
             (Unary(syntax::Operator::Not, inner_expr), Exact(declared_type_id))
                 if declared_type_id == EMBEDDED_TYPES.literal_true =>
             {
@@ -804,7 +802,9 @@ impl<'a> TypeChecker<'a> {
                 type_id: TypeId(0),
                 span: expr.span.clone(),
             }),
-            (Unary(syntax::Operator::Negate, _), Exact(declared_type_id)) if EMBEDDED_TYPES.is_unsigned_number(declared_type_id) => {
+            (Unary(syntax::Operator::Negate, _), Exact(declared_type_id))
+                if EMBEDDED_TYPES.is_unsigned_number(declared_type_id) =>
+            {
                 Err(TypeError {
                     kind: TypeErrorKind::TypeMismatch,
                     message: "Cannot negate an unsigned number",
@@ -812,11 +812,35 @@ impl<'a> TypeChecker<'a> {
                     span: expr.span.clone(),
                 })
             }
-            (Unary(syntax::Operator::Negate, inner_expr), Exact(declared_type_id)) if EMBEDDED_TYPES.is_number(declared_type_id) => {
-                self.check(inner_expr, Exact(declared_type_id));
+            (Unary(syntax::Operator::Negate, inner_expr), Exact(declared_type_id))
+                if EMBEDDED_TYPES.is_number(declared_type_id) =>
+            {
+                self.check(inner_expr, Exact(declared_type_id))?;
                 self.declare_type(expr, Exact(declared_type_id))
             }
-            _ => unimplemented!()
+            (Unary(syntax::Operator::Negate, inner_expr), NeedsInfer(expected_bounds))
+                if expected_bounds.borrow().must_be_numeric =>
+            {
+                let literal = expected_bounds.borrow().literal_value.clone().expect(
+                    "All numeric bounds expected to be has a literal, otherwise they are exact types"
+                );
+
+                use syntax::Literal::*;
+                match literal {
+                    Integer(_) | Float(_) => {
+                        expected_bounds.borrow_mut().literal_value = -&literal;
+                        self.check(inner_expr, NeedsInfer(expected_bounds.clone()))?;
+                        self.declare_type(expr, NeedsInfer(expected_bounds.clone()))
+                    }
+                    _ => Err(TypeError {
+                        kind: TypeErrorKind::TypeMismatch,
+                        message: "Expected numeric, found another kind of literal",
+                        type_id: TypeId(0),
+                        span: inner_expr.span.clone(),
+                    }),
+                }
+            }
+            _ => unimplemented!(),
         }
     }
 
@@ -828,7 +852,7 @@ impl<'a> TypeChecker<'a> {
     ) -> Result<TypeConstraint, TypeError> {
         let integer = number.to_integer().expect("to be finite!");
 
-        // Why the hell is that every DRYing attempt is ending with "Nah. Not worth it. Let's harcode it" in Rust?
+        // Why the hell is that every DRYing attempt is ending with "Nah. Not worth it. Let's hardcode it" in Rust?
         // If you make a macro in here, it will end with passing everything as an argument because these are "hygenic"
         // Closures might be a better alternative in here. But oh, RugInteger.to_i16 isn't return the same thing with RugInteger.to_i8 but you're just caring about is it a Some or None?
         // Generic closures aren't a thing for now.
