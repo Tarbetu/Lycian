@@ -245,14 +245,14 @@ impl Literal {
         match (self, rhs) {
             (lhs, LiteralList(rhs)) => Some(Boolean(rhs.borrow().iter().any(|i| {
                 if let ExpressionKind::Literal(i) = i.kind.as_ref() {
-                    i.as_ref() == lhs
+                    i == lhs
                 } else {
                     false
                 }
             }))),
             (lhs, LiteralArray(rhs)) => Some(Boolean(rhs.borrow().iter().any(|i| {
                 if let ExpressionKind::Literal(i) = i.kind.as_ref() {
-                    i.as_ref() == lhs
+                    i == lhs
                 } else {
                     false
                 }

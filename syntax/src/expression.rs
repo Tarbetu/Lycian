@@ -14,7 +14,7 @@ pub struct Expression {
 
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub enum ExpressionKind {
-    Literal(Rc<Literal>),
+    Literal(Literal),
     Grouping(Expression),
 
     Binary(Expression, Operator, Expression),

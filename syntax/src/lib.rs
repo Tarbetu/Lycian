@@ -724,13 +724,13 @@ impl Parser {
 
         if self.is_match(&[True]) {
             Ok(Expression {
-                kind: Box::new(ExpressionKind::Literal(Rc::new(Literal::Boolean(true)))),
+                kind: Box::new(ExpressionKind::Literal(Literal::Boolean(true))),
                 id: self.next_id(),
                 span: self.previous().span,
             })
         } else if self.is_match(&[False]) {
             Ok(Expression {
-                kind: Box::new(ExpressionKind::Literal(Rc::new(Literal::Boolean(false)))),
+                kind: Box::new(ExpressionKind::Literal(Literal::Boolean(false))),
                 id: self.next_id(),
                 span: self.previous().span,
             })
@@ -745,24 +745,24 @@ impl Parser {
                 Literal::Integer(Rc::new(number))
             };
             Ok(Expression {
-                kind: Box::new(ExpressionKind::Literal(Rc::new(literal))),
+                kind: Box::new(ExpressionKind::Literal(literal)),
                 id: self.next_id(),
                 span: token.span,
             })
         } else if self.is_match(&[Str]) {
             let token = self.previous();
             Ok(Expression {
-                kind: Box::new(ExpressionKind::Literal(Rc::new(Literal::Str(
+                kind: Box::new(ExpressionKind::Literal(Literal::Str(
                     token.unwrap_literal(),
-                )))),
+                ))),
                 id: self.next_id(),
                 span: token.span,
             })
         } else if self.is_match(&[BracketOpen]) {
             if self.is_match(&[BracketClose]) {
                 Ok(Expression {
-                    kind: Box::new(ExpressionKind::Literal(Rc::new(Literal::LiteralList(
-                        Rc::new(RefCell::new(LinkedList::new())),
+                    kind: Box::new(ExpressionKind::Literal(Literal::LiteralList(Rc::new(
+                        RefCell::new(LinkedList::new()),
                     )))),
                     id: self.next_id(),
                     span: self.previous().span,
@@ -778,8 +778,8 @@ impl Parser {
                 self.consume(BracketClose, "End of List")?;
 
                 Ok(Expression {
-                    kind: Box::new(ExpressionKind::Literal(Rc::new(Literal::LiteralList(
-                        Rc::new(RefCell::new(list)),
+                    kind: Box::new(ExpressionKind::Literal(Literal::LiteralList(Rc::new(
+                        RefCell::new(list),
                     )))),
                     id: self.next_id(),
                     span: self.previous().span,
@@ -788,8 +788,8 @@ impl Parser {
         } else if self.is_match(&[BraceOpen]) {
             if self.is_match(&[BraceClose]) {
                 Ok(Expression {
-                    kind: Box::new(ExpressionKind::Literal(Rc::new(Literal::LiteralArray(
-                        Rc::new(RefCell::new(vec![])),
+                    kind: Box::new(ExpressionKind::Literal(Literal::LiteralArray(Rc::new(
+                        RefCell::new(vec![]),
                     )))),
                     id: self.next_id(),
                     span: self.previous().span,
@@ -804,8 +804,8 @@ impl Parser {
                 self.consume(BracketClose, "End of List")?;
 
                 Ok(Expression {
-                    kind: Box::new(ExpressionKind::Literal(Rc::new(Literal::LiteralArray(
-                        Rc::new(RefCell::new(list)),
+                    kind: Box::new(ExpressionKind::Literal(Literal::LiteralArray(Rc::new(
+                        RefCell::new(list),
                     )))),
                     id: self.next_id(),
                     span: self.previous().span,
@@ -1002,20 +1002,20 @@ impl Parser {
                     (lhs_expr.kind.as_ref(), rhs_expr.kind.as_ref())
                 {
                     let Some(literal) = (match op {
-                        Operator::Add => lhs.as_ref() + rhs.as_ref(),
-                        Operator::Substract => lhs.as_ref() - rhs.as_ref(),
-                        Operator::Multiply => lhs.as_ref() * rhs.as_ref(),
-                        Operator::Divide => lhs.as_ref() / rhs.as_ref(),
-                        Operator::Modulo => lhs.as_ref() % rhs.as_ref(),
-                        Operator::And => lhs.as_ref() & rhs.as_ref(),
-                        Operator::Or => lhs.as_ref() | rhs.as_ref(),
-                        Operator::In => lhs.as_ref().in_operator(rhs.as_ref()),
-                        Operator::Equal => lhs.as_ref().is_equal(rhs.as_ref()),
-                        Operator::NotEqual => lhs.as_ref().is_not_equal(rhs.as_ref()),
-                        Operator::Greater => lhs.as_ref().greater(rhs.as_ref()),
-                        Operator::GreaterOrEqual => lhs.as_ref().greater_equal(rhs.as_ref()),
-                        Operator::Smaller => lhs.as_ref().less(rhs.as_ref()),
-                        Operator::SmallerOrEqual => lhs.as_ref().less_equal(rhs.as_ref()),
+                        Operator::Add => lhs + rhs,
+                        Operator::Substract => lhs - rhs,
+                        Operator::Multiply => lhs * rhs,
+                        Operator::Divide => lhs / rhs,
+                        Operator::Modulo => lhs % rhs,
+                        Operator::And => lhs & rhs,
+                        Operator::Or => lhs | rhs,
+                        Operator::In => lhs.in_operator(rhs),
+                        Operator::Equal => lhs.is_equal(rhs),
+                        Operator::NotEqual => lhs.is_not_equal(rhs),
+                        Operator::Greater => lhs.greater(rhs),
+                        Operator::GreaterOrEqual => lhs.greater_equal(rhs),
+                        Operator::Smaller => lhs.less(rhs),
+                        Operator::SmallerOrEqual => lhs.less_equal(rhs),
                         _ => unreachable!(),
                     }) else {
                         return Expression {
@@ -1025,7 +1025,7 @@ impl Parser {
                         };
                     };
                     Expression {
-                        kind: Box::new(Literal(Rc::new(literal))),
+                        kind: Box::new(Literal(literal)),
                         id: lhs_expr.id,
                         span: lhs_expr.span,
                     }
@@ -1042,14 +1042,14 @@ impl Parser {
 
                 if let Literal(ref literal) = kind.as_ref() {
                     let Some(result_literal) = (match op {
-                        Operator::Not => !literal.as_ref(),
-                        Operator::Negate => -literal.as_ref(),
+                        Operator::Not => !literal,
+                        Operator::Negate => -literal,
                         _ => unreachable!(),
                     }) else {
                         return Expression { kind, span, id };
                     };
                     Expression {
-                        kind: Box::new(Literal(Rc::new(result_literal))),
+                        kind: Box::new(Literal(result_literal)),
                         span,
                         id,
                     }

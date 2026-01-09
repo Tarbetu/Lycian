@@ -1,3 +1,5 @@
+use syntax::Literal;
+
 use super::*;
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -7,6 +9,7 @@ use std::rc::Rc;
 #[derive(PartialEq, Clone)]
 pub enum TypeConstraint {
     Exact(TypeId),
+    ExactLiteral(Literal),
     NeedsInfer(Rc<RefCell<TypeBounds>>),
 }
 
@@ -45,11 +48,9 @@ pub struct TypeBounds {
     // -- It will passed as a argument to the type instance
     pub type_arguments: Vec<TypeConstraint>,
 
-    // -- Literal Value Constraint
-    pub literal_value: Option<syntax::Literal>,
-
     // -- Trait Constraints
     pub must_be_numeric: bool,
+    pub must_be_signed: bool,
     pub must_be_addable: bool,
     pub must_be_integer: bool,
     pub must_be_floating: bool,
@@ -153,6 +154,16 @@ impl TypeBounds {
         }
     }
 
+    pub fn can_be_casted_to_container(&self) -> bool {
+        self.upper_bounds.is_empty()
+            && self.lower_bounds.is_empty()
+            && !self.must_be_numeric
+            && !self.must_be_addable
+            && !self.must_be_integer
+            && !self.must_be_floating
+            && !self.must_be_callable
+    }
+
     pub fn can_be_casted_to_boolean(&self) -> bool {
         self.upper_bounds.is_empty()
             && self.lower_bounds.is_empty()
@@ -174,11 +185,36 @@ impl TypeBounds {
             && !self.must_be_floating
     }
 
-    pub fn can_be_casted_to_float(&self) -> bool {
+    // All floats can be casted as a number
+    pub fn can_be_casted_to_number(&self) -> bool {
         self.upper_bounds.is_empty()
             && self.lower_bounds.is_empty()
             && !self.must_be_list
             && !self.must_be_array
+            && !self.must_be_callable
+    }
+
+    pub fn can_be_casted_to_char(&self) -> bool {
+        self.upper_bounds.is_empty()
+            && self.lower_bounds.is_empty()
+            && !self.must_be_list
+            && !self.must_be_array
+            && !self.must_be_numeric
+            && !self.must_be_addable
+            && !self.must_be_integer
+            && !self.must_be_floating
+            && !self.must_be_callable
+    }
+
+    pub fn can_be_casted_to_string(&self) -> bool {
+        self.upper_bounds.is_empty()
+            && self.lower_bounds.is_empty()
+            && !self.must_be_list
+            && !self.must_be_array
+            && !self.must_be_numeric
+            && !self.must_be_addable
+            && !self.must_be_integer
+            && !self.must_be_floating
             && !self.must_be_callable
     }
 }

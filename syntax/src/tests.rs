@@ -90,7 +90,7 @@ Program:
 
         assert!(matches!(
             *Parser::eliminate_expr(result).kind,
-            ExpressionKind::Literal(num) if num.as_ref() == &Literal::Integer(number(420.0 + 69.0)).into(),
+            ExpressionKind::Literal(num) if num == Literal::Integer(number(420.0 + 69.0)).into(),
         ));
     }
 
@@ -142,7 +142,7 @@ Program:
             } if caller.as_str() == "call" && matches!(args[0].clone(), Expression {
                 kind: caller_kind,
                 ..
-            } if *caller_kind == ExpressionKind::Literal(Rc::new(Literal::Integer(number(5.0)))))
+            } if *caller_kind == ExpressionKind::Literal(Literal::Integer(number(5.0))))
         ))
     }
 
@@ -352,7 +352,7 @@ match value:
             ) && matches!(
                 *condition_kind.clone(), ExpressionKind::Binary(Expression { kind: left, .. }, Operator::Greater, Expression { kind: right, .. })
                     if (matches!(*left.clone(), ExpressionKind::Call { caller: condition_call_name, .. } if condition_call_name.as_str() == "number")) &&
-                       *right.clone() == ExpressionKind::Literal(Rc::new(Literal::Integer(number(0.0)))
+                       *right.clone() == ExpressionKind::Literal(Literal::Integer(number(0.0))
                     )
                 )))
     }
