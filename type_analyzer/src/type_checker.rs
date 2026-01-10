@@ -556,7 +556,11 @@ impl<'a> TypeChecker<'a> {
                 self.declare_type(expr, Exact(declared_type_id))
             }
             (Binary(lhs, op, rhs), ExactLiteral(target_literal)) if op.is_arithmetic() => {
-                let ExactLiteral(lhs_literal) = self.synthesize(expr)? else {
+                use syntax::Literal::*;
+
+                let ExactLiteral(ref lhs_literal @ Integer(_) | ref lhs_literal @ Float(_)) =
+                    self.synthesize(expr)?
+                else {
                     return Err(TypeError {
                         kind: TypeErrorKind::LiteralFailure,
                         message: "Literal types must composed by other literals",
@@ -564,16 +568,30 @@ impl<'a> TypeChecker<'a> {
                         span: expr.span.clone(),
                     });
                 };
-                let rhs_literal = self.synthesize(expr)?;
+                let ExactLiteral(ref rhs_literal @ Integer(_) | ref rhs_literal @ Float(_)) =
+                    self.synthesize(expr)?
+                else {
+                    return Err(TypeError {
+                        kind: TypeErrorKind::LiteralFailure,
+                        message: "Literal types must composed by other literals",
+                        type_id: TypeId(0),
+                        span: expr.span.clone(),
+                    });
+                };
 
-                use syntax::Literal::*;
                 match target_literal {
                     Integer(_) | Float(_) => {
                         let target_literal = {
                             use syntax::Operator::*;
-                            match op {
-                                _ => unimplemented!(),
-                            }
+                            (match op {
+                                Add => lhs_literal + rhs_literal,
+                                Substract => lhs_literal - rhs_literal,
+                                Multiply => lhs_literal * rhs_literal,
+                                Divide => lhs_literal / rhs_literal,
+                                Modulo => lhs_literal % rhs_literal,
+                                _ => unreachable!(),
+                            })
+                            .expect("The values must be a number")
                         };
 
                         self.declare_similarity(lhs, rhs)?;
@@ -588,6 +606,124 @@ impl<'a> TypeChecker<'a> {
                     }),
                 }
             }
+            (Binary(lhs, op, rhs), NeedsInfer(expected_bounds))
+                if op.is_arithmetic() && expected_bounds.borrow().can_be_casted_to_boolean() =>
+            {
+                self.check(lhs, NeedsInfer(expected_bounds.clone()))?;
+                self.check(rhs, NeedsInfer(expected_bounds.clone()))?;
+                self.declare_similarity(lhs, rhs)?;
+                self.declare_type(expr, NeedsInfer(expected_bounds))
+            }
+            (Binary(_lhs, op, _rhs), NeedsInfer(_)) if op.is_arithmetic() => {
+                Err(TypeError {
+                    kind: TypeErrorKind::TypeMismatch,
+                    message: "Expression can not casted into a boolean!",
+                    type_id: TypeId(0),
+                    span: expr.span.clone(),
+                })
+            }
+            (Binary(lhs, op, rhs), Exact(declared_type_id))
+                if op.is_comparison() && EMBEDDED_TYPES.boolean == declared_type_id =>
+            {
+                self.check(
+                    lhs,
+                    TypeConstraint::needs_infer(TypeBounds::default().numeric()),
+                )?;
+                self.check(
+                    rhs,
+                    TypeConstraint::needs_infer(TypeBounds::default().numeric()),
+                )?;
+                self.declare_similarity(lhs, rhs)?;
+                self.declare_type(expr, Exact(EMBEDDED_TYPES.boolean))
+            }
+            (Binary(rhs, op, lhs), NeedsInfer(type_bounds))
+                if op.is_comparison() && type_bounds.borrow().can_be_casted_to_boolean() =>
+            {
+                self.check(
+                    lhs,
+                    TypeConstraint::needs_infer(TypeBounds::default().numeric()),
+                )?;
+                self.check(
+                    rhs,
+                    TypeConstraint::needs_infer(TypeBounds::default().numeric()),
+                )?;
+                self.declare_similarity(lhs, rhs)?;
+                self.declare_type(expr, Exact(EMBEDDED_TYPES.boolean))
+            }
+            (Binary(lhs, op, rhs), Exact(declared_type_id))
+                if op.is_comparison() && EMBEDDED_TYPES.literal_true == declared_type_id
+                    || EMBEDDED_TYPES.literal_false == declared_type_id =>
+            {
+                use syntax::Literal::*;
+
+                let ExactLiteral(ref lhs_literal @ Integer(_) | ref lhs_literal @ Float(_)) =
+                    self.synthesize(lhs)?
+                else {
+                    return Err(TypeError {
+                        kind: TypeErrorKind::LiteralFailure,
+                        message: "Literal types must composed by other literals",
+                        type_id: TypeId(0),
+                        span: expr.span.clone(),
+                    });
+                };
+                let ExactLiteral(ref rhs_literal @ Integer(_) | ref rhs_literal @ Float(_)) =
+                    self.synthesize(rhs)?
+                else {
+                    return Err(TypeError {
+                        kind: TypeErrorKind::LiteralFailure,
+                        message: "Literal types must composed by other literals",
+                        type_id: TypeId(0),
+                        span: expr.span.clone(),
+                    });
+                };
+
+                use syntax::Operator::*;
+                let operation_result = match op {
+                    Equal => lhs_literal == rhs_literal,
+                    NotEqual => lhs_literal != rhs_literal,
+                    _ => {
+                        let Boolean(result) = match op {
+                            Smaller => lhs_literal.less(rhs_literal),
+                            SmallerOrEqual => lhs_literal.less_equal(rhs_literal),
+                            Greater => lhs_literal.greater(rhs_literal),
+                            GreaterOrEqual => lhs_literal.greater_equal(rhs_literal),
+                            _ => unreachable!(),
+                        }
+                        .expect("The values must be a number") else {
+                            panic!("These shouldn't produce another kind of literal!")
+                        };
+
+                        result
+                    }
+                };
+
+                if (operation_result && EMBEDDED_TYPES.literal_true == declared_type_id)
+                    || (!operation_result && EMBEDDED_TYPES.literal_false == declared_type_id)
+                {
+                    self.declare_similarity(lhs, rhs)?;
+                    self.declare_similarity(expr, lhs)?;
+                    self.declare_type(expr, Exact(declared_type_id))
+                } else {
+                    Err(TypeError {
+                        kind: TypeErrorKind::LiteralFailure,
+                        message: "These values can not produce the answer",
+                        type_id: declared_type_id,
+                        span: expr.span.clone(),
+                    })
+                }
+            }
+            (Binary(_, op, _), Exact(declared_type_id)) if op.is_comparison() => Err(TypeError {
+                kind: TypeErrorKind::TypeMismatch,
+                message: "Expected boolean as a result of comparison expression",
+                type_id: declared_type_id,
+                span: expr.span.clone(),
+            }),
+            (Binary(_, op, _), NeedsInfer(_)) if op.is_comparison() => Err(TypeError {
+                kind: TypeErrorKind::TypeMismatch,
+                message: "Expected boolean as a result of comparison expression",
+                type_id: TypeId(0),
+                span: expr.span.clone(),
+            }),
             (Unary(syntax::Operator::Not, inner_expr), Exact(declared_type_id))
                 if declared_type_id == EMBEDDED_TYPES.literal_true =>
             {
