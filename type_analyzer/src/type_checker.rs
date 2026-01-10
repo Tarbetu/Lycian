@@ -616,15 +616,6 @@ impl<'a> TypeChecker<'a> {
                 self.declare_similarity(expr, inner_expr)?;
                 self.declare_type(inner_expr, Exact(EMBEDDED_TYPES.boolean))
             }
-<<<<<<< Updated upstream
-=======
-            (Unary(syntax::Operator::Not, _), Exact(declared_type_id)) => Err(TypeError {
-                kind: TypeErrorKind::TypeMismatch,
-                message: "Expected boolean inside a Not expression",
-                type_id: declared_type_id,
-                span: expr.span.clone(),
-            }),
->>>>>>> Stashed changes
             (Unary(syntax::Operator::Not, _), NeedsInfer(_)) => Err(TypeError {
                 kind: TypeErrorKind::TypeMismatch,
                 message: "Expected boolean inside a Not expression",
@@ -671,7 +662,6 @@ impl<'a> TypeChecker<'a> {
                     }),
                 }
             }
-<<<<<<< Updated upstream
             (Unary(syntax::Operator::Negate, inner_expr), NeedsInfer(expected_bounds))
                 if expected_bounds.borrow().can_be_casted_to_number() =>
             {
@@ -684,11 +674,6 @@ impl<'a> TypeChecker<'a> {
             (Unary(syntax::Operator::Negate, _), NeedsInfer(_)) => Err(TypeError {
                 kind: TypeErrorKind::TypeMismatch,
                 message: "Expression can not casted into a integer!",
-=======
-            (Unary(syntax::Operator::Negate, _), NeedsInfer(_)) => Err(TypeError {
-                kind: TypeErrorKind::TypeMismatch,
-                message: "Expected number inside a Negate expression",
->>>>>>> Stashed changes
                 type_id: TypeId(0),
                 span: expr.span.clone(),
             }),
