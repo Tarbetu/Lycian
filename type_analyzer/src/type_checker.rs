@@ -188,25 +188,10 @@ impl<'a> TypeChecker<'a> {
             Unary(syntax::Operator::Negate, inner_expr) => {
                 let expected_type = TypeConstraint::needs_infer(TypeBounds::default().numeric());
                 let expr_type = self.check(inner_expr, expected_type)?;
-                Ok(self.declare_type(expr, expr_type)?)
+                self.declare_type(expr, expr_type)
             }
-            IndexOperator(container, indexer) => {
-                let container_type = self.synthesize(container)?;
-                // Indexer always assumed as uIntSize!
-                self.check(indexer, Exact(EMBEDDED_TYPES.uIntSize))?;
-
-                let TypeConstraint::NeedsInfer(type_bounds) = container_type else {
-                    unreachable!("Exact types are not expected in synthesis mode!");
-                };
-
-                // Check for the clone later
-                Ok(type_bounds
-                    .borrow()
-                    .type_arguments
-                    .first()
-                    .cloned()
-                    .expect("Type arguments needed!"))
-            }
+            IndexOperator(..) => self.check(expr, TypeConstraint::default()),
+            Function(fn_def) => unimplemented!(),
             Call {
                 caller,
                 callee: None,
@@ -214,13 +199,7 @@ impl<'a> TypeChecker<'a> {
                 block,
                 ..
             } => {
-                let block_type = if let Some(block) = block {
-                    unimplemented!();
-
-                    Some(self.synthesize(block)?)
-                } else {
-                    None
-                };
+                // TODO: Find the "block" parameter of the function
 
                 let (binding_id, resolve_status) = self.find_binding(caller);
 
@@ -414,7 +393,13 @@ impl<'a> TypeChecker<'a> {
                         type_id: TypeId(0),
                         span: expr.span.clone(),
                     }),
-                    NeedsInfer(_bounds) => unimplemented!(),
+                    NeedsInfer(bounds) => {
+                        if bounds.borrow().upper_bounds().empty() {
+                            unimplemented!()
+                        } else {
+                            unimplemented!()
+                        }
+                    }
                 }
             }
             _ => unimplemented!(),
@@ -614,14 +599,12 @@ impl<'a> TypeChecker<'a> {
                 self.declare_similarity(lhs, rhs)?;
                 self.declare_type(expr, NeedsInfer(expected_bounds))
             }
-            (Binary(_lhs, op, _rhs), NeedsInfer(_)) if op.is_arithmetic() => {
-                Err(TypeError {
-                    kind: TypeErrorKind::TypeMismatch,
-                    message: "Expression can not casted into a boolean!",
-                    type_id: TypeId(0),
-                    span: expr.span.clone(),
-                })
-            }
+            (Binary(_lhs, op, _rhs), NeedsInfer(_)) if op.is_arithmetic() => Err(TypeError {
+                kind: TypeErrorKind::TypeMismatch,
+                message: "Expression can not casted into a boolean!",
+                type_id: TypeId(0),
+                span: expr.span.clone(),
+            }),
             (Binary(lhs, op, rhs), Exact(declared_type_id))
                 if op.is_comparison() && EMBEDDED_TYPES.boolean == declared_type_id =>
             {
@@ -724,6 +707,7 @@ impl<'a> TypeChecker<'a> {
                 type_id: TypeId(0),
                 span: expr.span.clone(),
             }),
+            (Binary(..), _) => unreachable!(),
             (Unary(syntax::Operator::Not, inner_expr), Exact(declared_type_id))
                 if declared_type_id == EMBEDDED_TYPES.literal_true =>
             {
@@ -813,6 +797,78 @@ impl<'a> TypeChecker<'a> {
                 type_id: TypeId(0),
                 span: expr.span.clone(),
             }),
+            (Unary(..), _) => unreachable!(),
+            (IndexOperator(container, indexer), declared_type) => {
+                self.check(indexer, Exact(EMBEDDED_TYPES.uIntSize))?;
+                use syntax::Literal::{LiteralArray, LiteralList};
+
+                match self.synthesize(container)? {
+                    Exact(container_type_id) => {
+                        let container_type = self
+                            .hierarchy
+                            .types
+                            .get(&container_type_id)
+                            .expect("The type must exist on hierarchy");
+
+                        let TypeDefinition::TypeInstance { args, .. } = container_type else {
+                            unreachable!("Container must be a type instance");
+                        };
+
+                        if args.first() == Some(&container_type_id) {
+                            self.declare_type(container, declared_type.clone())?;
+                            Ok(declared_type)
+                        } else {
+                            Err(TypeError {
+                                kind: TypeErrorKind::TypeMismatch,
+                                message: "Container type does not match the declared type",
+                                type_id: container_type_id,
+                                span: expr.span.clone(),
+                            })
+                        }
+                    }
+                    ExactLiteral(LiteralArray(array)) => {
+                        if let Some(first_expr) = array.borrow().first() {
+                            let result_type = self.check(first_expr, declared_type)?;
+                            self.declare_type(expr, result_type)
+                        } else {
+                            Err(TypeError {
+                                kind: TypeErrorKind::LiteralFailure,
+                                message: "Indexed array is empty!",
+                                type_id: TypeId(0),
+                                span: expr.span.clone(),
+                            })
+                        }
+                    }
+                    ExactLiteral(LiteralList(list)) => {
+                        if let Some(first_expr) = list.borrow().front() {
+                            let result_type = self.check(first_expr, declared_type)?;
+                            self.declare_type(expr, result_type)
+                        } else {
+                            Err(TypeError {
+                                kind: TypeErrorKind::LiteralFailure,
+                                message: "Indexed list is empty!",
+                                type_id: TypeId(0),
+                                span: expr.span.clone(),
+                            })
+                        }
+                    }
+                    _ => Err(TypeError {
+                        kind: TypeErrorKind::LiteralFailure,
+                        message: "Invalid usage of index operator",
+                        type_id: TypeId(0),
+                        span: expr.span.clone(),
+                    }),
+                }
+            }
+            Call {
+                caller,
+                callee,
+                args,
+                block,
+                ..
+            } => {
+                unimplemented!()
+            }
             _ => unimplemented!(),
         }
     }
@@ -984,14 +1040,9 @@ impl<'a> TypeChecker<'a> {
         use syntax::Literal::*;
 
         match literal.clone() {
-            Integer(_) => Ok(self.declare_type(
-                expr,
-                TypeConstraint::needs_infer(TypeBounds::default().integer()),
-            )?),
-            Float(_) => Ok(self.declare_type(
-                expr,
-                TypeConstraint::needs_infer(TypeBounds::default().floating()),
-            )?),
+            literal @ Integer(_) | literal @ Float(_) => {
+                Ok(self.declare_type(expr, ExactLiteral(literal))?)
+            }
             Boolean(true) => Ok(self.declare_type(expr, EMBEDDED_TYPES.literal_true.into())?),
             Boolean(false) => Ok(self.declare_type(expr, EMBEDDED_TYPES.literal_false.into())?),
             Char(_) => {
@@ -1031,50 +1082,28 @@ impl<'a> TypeChecker<'a> {
                 Ok(self.declare_type(expr, type_constraint)?)
             }
             LiteralList(expr_list) => {
-                let type_constraint = if let Some(first_expr) = expr_list.borrow().front() {
-                    let type_constraints = {
-                        let mut type_constraints = self.synthesize(first_expr)?;
+                if let Some(first_expr) = expr_list.borrow().front() {
+                    let mut type_constraints = self.synthesize(first_expr)?;
 
-                        for expr in expr_list.borrow().iter().skip(1) {
-                            type_constraints = self.check(expr, type_constraints)?;
-                            self.declare_similarity(first_expr, expr)?;
-                        }
-
-                        type_constraints
-                    };
-
-                    TypeConstraint::needs_infer(
-                        TypeBounds::default().list().with_argument(type_constraints),
-                    )
-                } else {
-                    TypeConstraint::needs_infer(TypeBounds::default().list())
+                    for expr in expr_list.borrow().iter().skip(1) {
+                        type_constraints = self.check(expr, type_constraints)?;
+                        self.declare_similarity(first_expr, expr)?;
+                    }
                 };
 
-                Ok(self.declare_type(expr, type_constraint)?)
+                Ok(self.declare_type(expr, ExactLiteral(LiteralList(expr_list.clone())))?)
             }
             LiteralArray(expr_array) => {
-                let type_contraint = if let Some(first_expr) = expr_array.borrow().first() {
-                    let type_constraints = {
-                        let mut type_constraints = self.synthesize(first_expr)?;
+                if let Some(first_expr) = expr_array.borrow().first() {
+                    let mut type_constraints = self.synthesize(first_expr)?;
 
-                        for expr in expr_array.borrow().iter().skip(1) {
-                            type_constraints = self.check(expr, type_constraints)?;
-                            self.declare_similarity(first_expr, expr)?;
-                        }
-
-                        type_constraints
-                    };
-
-                    TypeConstraint::needs_infer(
-                        TypeBounds::default()
-                            .array()
-                            .with_argument(type_constraints),
-                    )
-                } else {
-                    TypeConstraint::needs_infer(TypeBounds::default().array())
+                    for expr in expr_array.borrow().iter().skip(1) {
+                        type_constraints = self.check(expr, type_constraints)?;
+                        self.declare_similarity(first_expr, expr)?;
+                    }
                 };
 
-                Ok(self.declare_type(expr, type_contraint)?)
+                Ok(self.declare_type(expr, ExactLiteral(LiteralArray(expr_array.clone())))?)
             }
         }
     }
