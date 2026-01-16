@@ -2,6 +2,8 @@ use std::fmt::Display;
 use std::rc::Rc;
 use synonym::Synonym;
 
+use crate::type_bounds::TypeConstraint;
+
 #[derive(Synonym)]
 pub struct TypeId(pub usize);
 
@@ -107,10 +109,9 @@ pub enum TypeDefinition<'a> {
     },
     Function {
         id: TypeId,
+        params: Vec<(TypeId, syntax::PatternName)>,
         args: Vec<(TypeId, &'a syntax::Expression)>,
-        origin_id: TypeId,
-        size: TypeSize,
-        node: &'a syntax::Function,
+        return_type: TypeId,
     },
     TypeInstance {
         id: TypeId,
@@ -161,11 +162,12 @@ impl<'a> TypeDefinition<'a> {
         use TypeDefinition::*;
 
         match self {
-            Origin { size, .. } | Function { size, .. } | EmbeddedType { size, .. } => match size {
+            Origin { size, .. } | EmbeddedType { size, .. } => match size {
                 TypeSize::Exact(s) => *s,
                 TypeSize::PointerSized => 666,
                 _ => panic!("Type does not have an exact size"),
             },
+            Function { .. } => 666,
             Literal { .. } => {
                 panic!("Literal type does not have an exact size")
             }
@@ -184,9 +186,8 @@ impl<'a> TypeDefinition<'a> {
             Origin { id, .. } | EmbeddedType { id, .. } => *id,
             Literal { origin_id, .. }
             | Variant { origin_id, .. }
-            | Function { origin_id, .. }
             | TypeInstance { origin_id, .. } => *origin_id,
-            Object => TypeId(0),
+            Object | Function { .. } => TypeId(0),
         }
     }
 
@@ -194,11 +195,12 @@ impl<'a> TypeDefinition<'a> {
         use TypeDefinition::*;
 
         match self {
-            Origin { size, .. } | Function { size, .. } | EmbeddedType { size, .. } => *size,
+            Origin { size, .. } | EmbeddedType { size, .. } => *size,
             Literal { .. } => TypeSize::OriginSize,
             Variant { .. } => TypeSize::UnionSize,
             Object => TypeSize::Dynamic,
             TypeInstance { .. } => TypeSize::Dynamic,
+            Function { .. } => TypeSize::PointerSized,
         }
     }
 

@@ -393,8 +393,9 @@ impl<'a> TypeChecker<'a> {
                         type_id: TypeId(0),
                         span: expr.span.clone(),
                     }),
+                    UnresolvedFunction { return_type, .. } => Ok(*return_type),
                     NeedsInfer(bounds) => {
-                        if bounds.borrow().upper_bounds().empty() {
+                        if bounds.borrow().upper_bounds.is_empty() {
                             unimplemented!()
                         } else {
                             unimplemented!()
@@ -860,13 +861,16 @@ impl<'a> TypeChecker<'a> {
                     }),
                 }
             }
-            Call {
-                caller,
-                callee,
-                args,
-                block,
-                ..
-            } => {
+            (
+                Call {
+                    caller,
+                    callee,
+                    args,
+                    block,
+                    ..
+                },
+                defined_type,
+            ) => {
                 unimplemented!()
             }
             _ => unimplemented!(),
@@ -1281,6 +1285,12 @@ impl<'a> TypeChecker<'a> {
                 type_id: TypeId(0),
                 span: expr.span.clone(),
             }),
+            (_anyliteral, UnresolvedFunction { .. }) => Err(TypeError {
+                kind: TypeErrorKind::LiteralFailure,
+                message: "Literal types can not be a function type",
+                type_id: TypeId(0),
+                span: expr.span.clone(),
+            }),
             (LiteralArray(elements), Exact(declared_type_id)) => {
                 use TypeDefinition::{Literal, TypeInstance};
 
@@ -1683,6 +1693,72 @@ impl<'a> TypeChecker<'a> {
             | (Some(declared_type), ExactLiteral(literal)) => {
                 self.declare_literal(expr, literal, declared_type)
             }
+            (
+                Some(existing_function @ UnresolvedFunction { .. }),
+                declared_function @ UnresolvedFunction { .. },
+            ) if existing_function == declared_function => {
+                self.root_to_type.insert(root, existing_function);
+                Ok(declared_function)
+            }
+            (
+                Some(existing_function @ UnresolvedFunction { .. }),
+                declared_function @ UnresolvedFunction { .. },
+            ) => Err(TypeError {
+                kind: TypeErrorKind::UnexpectedType,
+                message: "Declared function type is different than the existing function type",
+                type_id: TypeId(0),
+                span: expr.span.clone(),
+            }),
+            (
+                Some(Exact(known_type_id)),
+                UnresolvedFunction {
+                    params: unresolved_params,
+                    args: unresolved_args,
+                    return_type: unresolved_return_type,
+                    ..
+                },
+            )
+            | (
+                Some(UnresolvedFunction {
+                    params: unresolved_params,
+                    args: unresolved_args,
+                    return_type: unresolved_return_type,
+                    ..
+                }),
+                Exact(known_type_id),
+            ) => {
+                // TODO: Check the inconsistencies later, it seems kinda weird
+                let Some(TypeDefinition::Function {
+                    id,
+                    params: existing_params,
+                    args: existing_args,
+                    return_type: existing_return_type,
+                }) = self.hierarchy.types.get(&known_type_id)
+                else {
+                    return Err(TypeError {
+                        kind: TypeErrorKind::UnexpectedType,
+                        message: "Declared type is not a function type",
+                        type_id: known_type_id,
+                        span: expr.span.clone(),
+                    });
+                };
+
+                unimplemented!()
+            }
+            (Some(NeedsInfer(type_bounds)), function @ UnresolvedFunction { .. })
+            | (Some(function @ UnresolvedFunction { .. }), NeedsInfer(type_bounds))
+                if type_bounds.borrow().can_be_casted_to_function() =>
+            {
+                self.root_to_type.insert(expr_id, function.clone());
+                Ok(function)
+            }
+            (Some(NeedsInfer(_)), UnresolvedFunction { .. })
+            | (Some(UnresolvedFunction { .. }), NeedsInfer(_)) => Err(TypeError {
+                kind: TypeErrorKind::UnexpectedType,
+                message: "Literal type can not be a function type",
+                type_id: TypeId(0),
+                span: expr.span.clone(),
+            }),
             (Some(NeedsInfer(type_bounds)), Exact(known_type_id))
             | (Some(Exact(known_type_id)), NeedsInfer(type_bounds)) => {
                 let type_bounds = type_bounds.borrow();
@@ -1699,7 +1775,7 @@ impl<'a> TypeChecker<'a> {
                             span: expr.span.clone(),
                         })
                     } else {
-                        self.root_to_type.insert(expr_id, Exact(known_type_id));
+                        self.root_to_type.insert(root, Exact(known_type_id));
                         Ok(Exact(known_type_id))
                     }
                 } else if is_upper_bounds_empty {
@@ -1709,7 +1785,7 @@ impl<'a> TypeChecker<'a> {
                         .copied()
                         .any(|lower_bound| self.hierarchy.is_supertype(known_type_id, lower_bound))
                     {
-                        self.root_to_type.insert(expr_id, Exact(known_type_id));
+                        self.root_to_type.insert(root, Exact(known_type_id));
                         Ok(Exact(known_type_id))
                     } else {
                         Err(TypeError {
@@ -1726,7 +1802,7 @@ impl<'a> TypeChecker<'a> {
                         .copied()
                         .any(|upper_bound| self.hierarchy.is_supertype(upper_bound, known_type_id))
                     {
-                        self.root_to_type.insert(expr_id, Exact(known_type_id));
+                        self.root_to_type.insert(root, Exact(known_type_id));
                         Ok(Exact(known_type_id))
                     } else {
                         Err(TypeError {
@@ -1745,7 +1821,7 @@ impl<'a> TypeChecker<'a> {
                         });
 
                     if is_compatible {
-                        self.root_to_type.insert(expr_id, Exact(known_type_id));
+                        self.root_to_type.insert(root, Exact(known_type_id));
                         Ok(Exact(known_type_id))
                     } else {
                         Err(TypeError {
@@ -1760,11 +1836,11 @@ impl<'a> TypeChecker<'a> {
             (Some(NeedsInfer(known_type_bounds)), NeedsInfer(declared_type_bounds)) => {
                 known_type_bounds.borrow_mut().merge(declared_type_bounds);
                 self.root_to_type
-                    .insert(expr_id, NeedsInfer(known_type_bounds.clone()));
+                    .insert(root, NeedsInfer(known_type_bounds.clone()));
                 Ok(NeedsInfer(known_type_bounds))
             }
             (None, type_knowledge) => {
-                self.root_to_type.insert(expr_id, type_knowledge.clone());
+                self.root_to_type.insert(root, type_knowledge.clone());
                 Ok(type_knowledge)
             }
         }

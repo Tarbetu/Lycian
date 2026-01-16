@@ -192,7 +192,7 @@ impl<'a> Hierarchy<'a> {
             //     ..
             // } |
             TypeDefinition::Function {
-                origin_id: super_origin_id,
+                params: super_params,
                 args: super_args,
                 ..
             },
@@ -202,13 +202,24 @@ impl<'a> Hierarchy<'a> {
             //     ..
             // } |
             TypeDefinition::Function {
-                origin_id: sub_origin_id,
+                params: sub_params,
                 args: sub_args,
                 ..
             },
         ) = (super_type, sub_type)
             && discriminant(super_type) == discriminant(sub_type)
-            && super_origin_id == sub_origin_id
+            && (super_params.starts_with(sub_params)
+                || (super_params.len() >= sub_params.len()
+                    && super_params.iter().zip(sub_params.iter()).all(
+                        |((super_type_id, _super_arg), (sub_type_id, _sub_arg))| {
+                            visited.insert((*super_type_id, *sub_type_id));
+                            let super_type = self.types.get(super_type_id).unwrap();
+                            let sub_type = self.types.get(sub_type_id).unwrap();
+                            let result = self.check_supertype(super_type, sub_type, visited);
+                            visited.remove(&(*super_type_id, *sub_type_id));
+                            result
+                        },
+                    )))
             && (super_args.starts_with(sub_args)
                 || (super_args.len() >= sub_args.len()
                     && super_args.iter().zip(sub_args.iter()).all(

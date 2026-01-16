@@ -10,7 +10,49 @@ use std::rc::Rc;
 pub enum TypeConstraint {
     Exact(TypeId),
     ExactLiteral(Literal),
+    UnresolvedFunction {
+        params: Vec<TypeConstraint>,
+        args: Vec<TypeConstraint>,
+        return_type: Box<TypeConstraint>,
+    },
     NeedsInfer(Rc<RefCell<TypeBounds>>),
+}
+
+impl std::fmt::Debug for TypeConstraint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Exact(arg0) => f.debug_tuple("Exact").field(arg0).finish(),
+            Self::ExactLiteral(arg0) => f.debug_tuple("ExactLiteral").field(arg0).finish(),
+            Self::NeedsInfer(type_bounds) => f
+                .debug_tuple("NeedsInfer")
+                .field({
+                    if type_bounds.borrow().can_be_casted_to_boolean() {
+                        &"maybe boolean"
+                    } else if type_bounds.borrow().can_be_casted_to_char() {
+                        &"maybe char"
+                    } else if type_bounds.borrow().can_be_casted_to_integer() {
+                        &"maybe integer"
+                    } else if type_bounds.borrow().can_be_casted_to_number() {
+                        &"maybe number"
+                    } else if type_bounds.borrow().can_be_casted_to_container() {
+                        &"maybe container"
+                    } else {
+                        &""
+                    }
+                })
+                .finish(),
+            TypeConstraint::UnresolvedFunction {
+                params,
+                args,
+                return_type,
+            } => f
+                .debug_tuple("UnresolvedFunction")
+                .field(params)
+                .field(args)
+                .field(return_type)
+                .finish(),
+        }
+    }
 }
 
 impl Default for TypeConstraint {
@@ -216,5 +258,16 @@ impl TypeBounds {
             && !self.must_be_integer
             && !self.must_be_floating
             && !self.must_be_callable
+    }
+
+    pub fn can_be_casted_to_function(&self) -> bool {
+        self.upper_bounds.is_empty()
+            && self.lower_bounds.is_empty()
+            && !self.must_be_list
+            && !self.must_be_array
+            && !self.must_be_numeric
+            && !self.must_be_addable
+            && !self.must_be_integer
+            && !self.must_be_floating
     }
 }
