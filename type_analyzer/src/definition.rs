@@ -109,8 +109,7 @@ pub enum TypeDefinition<'a> {
     },
     Function {
         id: TypeId,
-        params: Vec<(TypeId, syntax::PatternName)>,
-        args: Vec<(TypeId, &'a syntax::Expression)>,
+        params: Vec<TypeId>,
         return_type: TypeId,
     },
     TypeInstance {

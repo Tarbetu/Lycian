@@ -12,7 +12,6 @@ pub enum TypeConstraint {
     ExactLiteral(Literal),
     UnresolvedFunction {
         params: Vec<TypeConstraint>,
-        args: Vec<TypeConstraint>,
         return_type: Box<TypeConstraint>,
     },
     NeedsInfer(Rc<RefCell<TypeBounds>>),
@@ -43,12 +42,10 @@ impl std::fmt::Debug for TypeConstraint {
                 .finish(),
             TypeConstraint::UnresolvedFunction {
                 params,
-                args,
                 return_type,
             } => f
                 .debug_tuple("UnresolvedFunction")
                 .field(params)
-                .field(args)
                 .field(return_type)
                 .finish(),
         }

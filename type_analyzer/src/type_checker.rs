@@ -1703,47 +1703,19 @@ impl<'a> TypeChecker<'a> {
             (
                 Some(existing_function @ UnresolvedFunction { .. }),
                 declared_function @ UnresolvedFunction { .. },
-            ) => Err(TypeError {
+            ) if existing_function == declared_function => {
+                self.root_to_type.insert(root, existing_function);
+                Ok(declared_function)
+            }
+            (Some(UnresolvedFunction { .. }), UnresolvedFunction { .. }) => Err(TypeError {
                 kind: TypeErrorKind::UnexpectedType,
                 message: "Declared function type is different than the existing function type",
                 type_id: TypeId(0),
                 span: expr.span.clone(),
             }),
-            (
-                Some(Exact(known_type_id)),
-                UnresolvedFunction {
-                    params: unresolved_params,
-                    args: unresolved_args,
-                    return_type: unresolved_return_type,
-                    ..
-                },
-            )
-            | (
-                Some(UnresolvedFunction {
-                    params: unresolved_params,
-                    args: unresolved_args,
-                    return_type: unresolved_return_type,
-                    ..
-                }),
-                Exact(known_type_id),
-            ) => {
-                // TODO: Check the inconsistencies later, it seems kinda weird
-                let Some(TypeDefinition::Function {
-                    id,
-                    params: existing_params,
-                    args: existing_args,
-                    return_type: existing_return_type,
-                }) = self.hierarchy.types.get(&known_type_id)
-                else {
-                    return Err(TypeError {
-                        kind: TypeErrorKind::UnexpectedType,
-                        message: "Declared type is not a function type",
-                        type_id: known_type_id,
-                        span: expr.span.clone(),
-                    });
-                };
-
-                unimplemented!()
+            (Some(Exact(known_type_id)), unresolved_function @ UnresolvedFunction { .. })
+            | (Some(unresolved_function @ UnresolvedFunction { .. }), Exact(known_type_id)) => {
+                self.declare_function_type(unresolved_function, known_type_id, &expr.span)
             }
             (Some(NeedsInfer(type_bounds)), function @ UnresolvedFunction { .. })
             | (Some(function @ UnresolvedFunction { .. }), NeedsInfer(type_bounds))
@@ -1844,6 +1816,76 @@ impl<'a> TypeChecker<'a> {
                 Ok(type_knowledge)
             }
         }
+    }
+
+    fn declare_function_type(
+        &mut self,
+        unresolved_function: TypeConstraint,
+        function_type_id: TypeId,
+        span: &scanner::Span,
+    ) -> TypeResult<TypeConstraint> {
+        let TypeConstraint::UnresolvedFunction {
+            params: unresolved_params,
+            return_type: unresolved_return_type,
+        } = unresolved_function
+        else {
+            panic!("Unexpected parameters")
+        };
+
+        let Some(TypeDefinition::Function {
+            id,
+            params: existing_params,
+            return_type: existing_return_type,
+        }) = self.hierarchy.types.get(&function_type_id)
+        else {
+            return Err(TypeError {
+                kind: TypeErrorKind::UnexpectedType,
+                message: "Declared type is not a function type",
+                type_id: function_type_id,
+                span: span.clone(),
+            });
+        };
+
+        use TypeConstraint::*;
+        match unresolved_return_type.as_ref() {
+            Exact(declared_return_type) if declared_return_type == existing_return_type => {}
+            Exact(declared_return_type) => {
+                return Err(TypeError {
+                    kind: TypeErrorKind::TypeMismatch,
+                    message: "Return types does not match of functions",
+                    type_id: *declared_return_type,
+                    span: span.clone(),
+                });
+            }
+            ExactLiteral(literal) => {
+                let Some(TypeDefinition::Literal { node, .. }) =
+                    self.hierarchy.types.get(existing_return_type)
+                else {
+                    return Err(TypeError {
+                        kind: TypeErrorKind::TypeMismatch,
+                        message: "Return type of function is not a literal type",
+                        type_id: *existing_return_type,
+                        span: span.clone(),
+                    });
+                };
+
+                if node != literal {
+                    return Err(TypeError {
+                        kind: TypeErrorKind::TypeMismatch,
+                        message: "Return literal types does not match of functions",
+                        type_id: *existing_return_type,
+                        span: span.clone(),
+                    });
+                }
+            }
+            UnresolvedFunction {
+                params: declared_params,
+                return_type: declared_result_type,
+            } => {}
+            NeedsInfer(type_bounds) => {}
+        }
+
+        unimplemented!()
     }
 
     fn declare_expression(&mut self, expr_id: ExprId) {
