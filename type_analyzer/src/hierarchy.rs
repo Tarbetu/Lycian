@@ -12,7 +12,6 @@ pub struct Hierarchy<'a> {
     pub name_to_origin_id: HashMap<Rc<String>, TypeId>,
     pub variants_of_origin: HashMap<TypeId, HashMap<Rc<String>, TypeId>>,
     pub binding_to_type: HashMap<scope::BindingId, TypeId>,
-    pub literal_types: LiteralTypeTable,
     pub embedded_types: &'static EmbeddedTypes,
     pub ancestors: HashMap<TypeId, Vec<TypeId>>,
     // Type Instances might be confusing
@@ -25,16 +24,6 @@ pub struct Hierarchy<'a> {
     supertype_cache: HashMap<(TypeId, TypeId), bool>,
 }
 
-#[derive(Default)]
-pub struct LiteralTypeTable {
-    pub integers: HashMap<syntax::Literal, TypeId>,
-    pub floats: HashMap<syntax::Literal, TypeId>,
-    pub chars: HashMap<syntax::Literal, TypeId>,
-    pub strings: HashMap<syntax::Literal, TypeId>,
-    pub lists: HashMap<syntax::Literal, TypeId>,
-    pub arrays: HashMap<syntax::Literal, TypeId>,
-}
-
 impl<'a> Hierarchy<'a> {
     pub(crate) fn new(scope_hierarchy: scope::Hierarchy<'a>) -> Self {
         Self {
@@ -42,7 +31,6 @@ impl<'a> Hierarchy<'a> {
             last_id: TypeId(EMBEDDED_TYPES.count),
             name_to_origin_id: HashMap::new(),
             variants_of_origin: HashMap::new(),
-            literal_types: LiteralTypeTable::default(),
             embedded_types: &EMBEDDED_TYPES,
             type_instances: HashMap::new(),
             scope_hierarchy,
@@ -78,6 +66,54 @@ impl<'a> Hierarchy<'a> {
             id,
             origin_id,
             args,
+            node: None,
+        };
+
+        self.types.insert(id, type_def);
+
+        let type_def = self.types.get(&id).expect("Origin type expected!");
+
+        let type_instances = self.type_instances.entry(origin_id).or_default();
+
+        type_instances.insert(type_def.type_args().clone(), type_def.id());
+
+        id
+    }
+
+    pub(crate) fn get_literal_instance(
+        &mut self,
+        origin_id: TypeId,
+        node: syntax::Literal,
+    ) -> TypeId {
+        if let Some(type_instances) = self.type_instances.get(&origin_id) {
+            for (_args, type_instance_id) in type_instances.iter() {
+                let type_instance = self.types.get(type_instance_id).unwrap();
+                if let TypeDefinition::TypeInstance {
+                    node: Some(literal),
+                    ..
+                } = type_instance
+                {
+                    if literal == &node {
+                        return *type_instance_id;
+                    }
+                }
+            }
+        }
+
+        self.push_literal_instance(origin_id, node)
+    }
+
+    pub(crate) fn push_literal_instance(
+        &mut self,
+        origin_id: TypeId,
+        node: syntax::Literal,
+    ) -> TypeId {
+        let id = self.next_id();
+        let type_def = TypeDefinition::TypeInstance {
+            id,
+            origin_id,
+            args: Rc::new(vec![]),
+            node: Some(node),
         };
 
         self.types.insert(id, type_def);
@@ -171,7 +207,6 @@ impl<'a> Hierarchy<'a> {
                 id: super_type_id, ..
             },
             TypeDefinition::Variant { origin_id, .. }
-            | TypeDefinition::Literal { origin_id, .. }
             | TypeDefinition::TypeInstance { origin_id, .. },
         ) = (super_type, sub_type)
         {
@@ -201,8 +236,7 @@ impl<'a> Hierarchy<'a> {
             //     ..
             // } |
             TypeDefinition::Function {
-                params: sub_params,
-                ..
+                params: sub_params, ..
             },
         ) = (super_type, sub_type)
             && discriminant(super_type) == discriminant(sub_type)
@@ -459,18 +493,20 @@ impl<'a> Hierarchy<'a> {
             ),
             (
                 EMBEDDED_TYPES.literal_true,
-                TypeDefinition::EmbeddedType {
+                TypeDefinition::TypeInstance {
                     id: EMBEDDED_TYPES.literal_true,
-                    name: EmbeddedTypeName::Primitive(PrimitiveType::LiteralTrue),
-                    size: TypeSize::Exact(1),
+                    origin_id: EMBEDDED_TYPES.boolean,
+                    args: Rc::default(),
+                    node: Some(syntax::Literal::Boolean(true)),
                 },
             ),
             (
                 EMBEDDED_TYPES.literal_false,
-                TypeDefinition::EmbeddedType {
+                TypeDefinition::TypeInstance {
                     id: EMBEDDED_TYPES.literal_false,
-                    name: EmbeddedTypeName::Primitive(PrimitiveType::LiteralFalse),
-                    size: TypeSize::Exact(1),
+                    origin_id: EMBEDDED_TYPES.boolean,
+                    args: Rc::default(),
+                    node: Some(syntax::Literal::Boolean(false)),
                 },
             ),
         ]);

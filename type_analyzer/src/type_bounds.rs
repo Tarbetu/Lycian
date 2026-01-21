@@ -1,5 +1,3 @@
-use syntax::Literal;
-
 use super::*;
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -9,11 +7,15 @@ use std::rc::Rc;
 #[derive(PartialEq, Clone)]
 pub enum TypeConstraint {
     Exact(TypeId),
-    ExactLiteral(Literal),
-    UnresolvedFunction {
-        params: Vec<TypeConstraint>,
-        return_type: Box<TypeConstraint>,
-    },
+    // These ones are needed for true literal typing and wider type inference
+    // But I decided to skip them to reduce initial complexity
+    // These features deferred for later
+    /* ExactLiteral(Literal),
+     UnresolvedFunction {
+         params: Vec<TypeConstraint>,
+         return_type: Box<TypeConstraint>,
+    }
+    */
     NeedsInfer(Rc<RefCell<TypeBounds>>),
 }
 
@@ -21,7 +23,7 @@ impl std::fmt::Debug for TypeConstraint {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Exact(arg0) => f.debug_tuple("Exact").field(arg0).finish(),
-            Self::ExactLiteral(arg0) => f.debug_tuple("ExactLiteral").field(arg0).finish(),
+            // Self::ExactLiteral(arg0) => f.debug_tuple("ExactLiteral").field(arg0).finish(),
             Self::NeedsInfer(type_bounds) => f
                 .debug_tuple("NeedsInfer")
                 .field({
@@ -40,14 +42,14 @@ impl std::fmt::Debug for TypeConstraint {
                     }
                 })
                 .finish(),
-            TypeConstraint::UnresolvedFunction {
+            /*  TypeConstraint::UnresolvedFunction {
                 params,
                 return_type,
             } => f
                 .debug_tuple("UnresolvedFunction")
                 .field(params)
                 .field(return_type)
-                .finish(),
+                .finish(), */
         }
     }
 }

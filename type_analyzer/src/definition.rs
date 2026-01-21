@@ -83,11 +83,6 @@ pub enum TypeSize {
 #[derive(Debug, PartialEq, Clone)]
 pub enum TypeDefinition<'a> {
     Object,
-    Literal {
-        id: TypeId,
-        origin_id: TypeId,
-        node: syntax::Literal,
-    },
     EmbeddedType {
         id: TypeId,
         name: EmbeddedTypeName,
@@ -112,10 +107,12 @@ pub enum TypeDefinition<'a> {
         params: Vec<TypeId>,
         return_type: TypeId,
     },
+    // Literal types are Type Instances
     TypeInstance {
         id: TypeId,
         origin_id: TypeId,
         args: Rc<Vec<TypeId>>,
+        node: Option<syntax::Literal>,
     },
 }
 
@@ -126,7 +123,6 @@ impl<'a> TypeDefinition<'a> {
         match self {
             Object => Rc::new(String::from("Object")),
             EmbeddedType { name, .. } => name.to_string().into(),
-            Literal { .. } => unimplemented!(),
             Origin { name, .. } => name.clone(),
             Variant { .. } => unimplemented!(),
             Function { .. } => unimplemented!(),
@@ -139,7 +135,6 @@ impl<'a> TypeDefinition<'a> {
 
         match self {
             Object => TypeId(0),
-            Literal { id, .. } => *id,
             EmbeddedType { id, .. } => *id,
             Origin { id, .. } => *id,
             Variant { id, .. } => *id,
@@ -167,9 +162,6 @@ impl<'a> TypeDefinition<'a> {
                 _ => panic!("Type does not have an exact size"),
             },
             Function { .. } => 666,
-            Literal { .. } => {
-                panic!("Literal type does not have an exact size")
-            }
             Variant { .. } => panic!("Variant type does not have an exact size"),
             Object => panic!("Object type does not have an exact size"),
             TypeInstance { .. } => {
@@ -183,9 +175,7 @@ impl<'a> TypeDefinition<'a> {
 
         match self {
             Origin { id, .. } | EmbeddedType { id, .. } => *id,
-            Literal { origin_id, .. }
-            | Variant { origin_id, .. }
-            | TypeInstance { origin_id, .. } => *origin_id,
+            Variant { origin_id, .. } | TypeInstance { origin_id, .. } => *origin_id,
             Object | Function { .. } => TypeId(0),
         }
     }
@@ -195,7 +185,6 @@ impl<'a> TypeDefinition<'a> {
 
         match self {
             Origin { size, .. } | EmbeddedType { size, .. } => *size,
-            Literal { .. } => TypeSize::OriginSize,
             Variant { .. } => TypeSize::UnionSize,
             Object => TypeSize::Dynamic,
             TypeInstance { .. } => TypeSize::Dynamic,
