@@ -575,16 +575,22 @@ impl<'a> TypeChecker<'a> {
                             unreachable!("Container must be a type instance");
                         };
 
-                        if args.first() == Some(&container_type_id) {
-                            self.declare_type(container, declared_type.clone())?;
-                            Ok(declared_type)
-                        } else {
-                            Err(TypeError {
+                        match declared_type {
+                            Exact(declared_type_id) if args.first() == Some(&declared_type_id) => {
+                                self.declare_type(container, declared_type.clone())?;
+                                Ok(declared_type)
+                            }
+                            // It's better to fine check later
+                            NeedsInfer(_) => {
+                                self.declare_type(container, declared_type.clone())?;
+                                Ok(declared_type)
+                            }
+                            _ => Err(TypeError {
                                 kind: TypeErrorKind::TypeMismatch,
                                 message: "Container type does not match the declared type",
                                 type_id: container_type_id,
                                 span: expr.span.clone(),
-                            })
+                            }),
                         }
                     }
                     _ => Err(TypeError {
